@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ccef-connections"
+version = "0.1.0"
+description = "Reusable connection library for CCEF data integrations"
+authors = [{name = "Common Cause Education Fund"}]
+license = {text = "MIT"}
+requires-python = ">=3.9"
+readme = "README.md"
+dependencies = [
+    # Existing dependencies
+    "pyairtable>=2.0.0",
+    "langchain>=0.1.0",
+    "langchain-openai>=0.0.5",
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+    # New for Google Sheets
+    "gspread>=5.12.0",
+    "google-auth>=2.25.0",
+    "google-auth-oauthlib>=1.2.0",
+    # New for BigQuery
+    "google-cloud-bigquery>=3.13.0",
+    "pandas-gbq>=0.19.0",
+    "db-dtypes>=1.1.0",
+    # Retry logic
+    "tenacity>=8.2.0",
+]
+
+[project.optional-dependencies]
+pandas = [
+    "pandas>=2.0.0",
+]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.7.0",
+    "ruff>=0.1.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
