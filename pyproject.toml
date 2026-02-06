@@ -27,6 +27,8 @@ dependencies = [
     "db-dtypes>=1.1.0",
     # Retry logic
     "tenacity>=8.2.0",
+    # HelpScout HTTP client
+    "requests>=2.31.0",
 ]
 
 [project.optional-dependencies]
