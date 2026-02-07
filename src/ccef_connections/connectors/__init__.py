@@ -5,6 +5,7 @@ from .bigquery import BigQueryConnector
 from .helpscout import HelpScoutConnector
 from .openai import OpenAIConnector
 from .sheets import SheetsConnector
+from .zoom import ZoomConnector
 
 __all__ = [
     "AirtableConnector",
@@ -12,4 +13,5 @@ __all__ = [
     "HelpScoutConnector",
     "OpenAIConnector",
     "SheetsConnector",
+    "ZoomConnector",
 ]

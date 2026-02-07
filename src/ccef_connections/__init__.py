@@ -11,6 +11,7 @@ from .connectors.bigquery import BigQueryConnector
 from .connectors.helpscout import HelpScoutConnector
 from .connectors.openai import OpenAIConnector
 from .connectors.sheets import SheetsConnector
+from .connectors.zoom import ZoomConnector
 from .core.credentials import CredentialManager, get_credential
 from .exceptions import (
     CCEFConnectionError,
@@ -32,6 +33,7 @@ __all__ = [
     "HelpScoutConnector",
     "OpenAIConnector",
     "SheetsConnector",
+    "ZoomConnector",
     # Configuration
     "ConfigManager",
     # Credentials

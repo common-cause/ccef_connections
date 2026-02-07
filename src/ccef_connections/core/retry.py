@@ -161,3 +161,30 @@ def retry_helpscout_operation(func: Callable) -> Callable:
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )(func)
+
+
+def retry_zoom_operation(func: Callable) -> Callable:
+    """
+    Decorator for Zoom API operations with retry logic.
+
+    Zoom API has rate limits; this implements exponential backoff
+    with 5 attempts, matching the pattern used by other API decorators.
+
+    Args:
+        func: The function to decorate
+
+    Returns:
+        Decorated function with Zoom-specific retry logic
+
+    Examples:
+        >>> @retry_zoom_operation
+        ... def list_meetings(user_id):
+        ...     return client.get(f"/users/{user_id}/meetings")
+    """
+    return retry(
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=2.0, min=1.0, max=60.0),
+        retry=retry_if_exception_type((ConnectionError, RateLimitError, Exception)),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )(func)

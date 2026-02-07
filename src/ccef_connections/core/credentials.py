@@ -184,6 +184,31 @@ class CredentialManager:
             )
         return creds
 
+    def get_zoom_credentials(self) -> Dict[str, Any]:
+        """
+        Get Zoom Server-to-Server OAuth credentials.
+
+        Returns:
+            Dict with 'account_id', 'client_id', and 'client_secret' keys
+
+        Raises:
+            CredentialError: If the credential is missing, invalid JSON,
+                or missing required keys
+        """
+        creds = self.get_credential("ZOOM_CREDENTIALS", is_json=True)
+        if not isinstance(creds, dict):
+            raise CredentialError(
+                "ZOOM_CREDENTIALS_PASSWORD must be a valid JSON object"
+            )
+        missing = [
+            k for k in ("account_id", "client_id", "client_secret") if k not in creds
+        ]
+        if missing:
+            raise CredentialError(
+                f"ZOOM_CREDENTIALS_PASSWORD missing required keys: {', '.join(missing)}"
+            )
+        return creds
+
     def clear_cache(self) -> None:
         """Clear the credentials cache. Useful for testing or credential rotation."""
         self._credentials_cache.clear()

@@ -8,6 +8,7 @@ from .retry import (
     retry_openai_operation,
     retry_google_operation,
     retry_helpscout_operation,
+    retry_zoom_operation,
 )
 
 __all__ = [
@@ -19,4 +20,5 @@ __all__ = [
     "retry_openai_operation",
     "retry_google_operation",
     "retry_helpscout_operation",
+    "retry_zoom_operation",
 ]
