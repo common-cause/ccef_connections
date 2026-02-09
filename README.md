@@ -1,13 +1,15 @@
 # CCEF Connections
 
-A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, and BigQuery with Civis credential compatibility.
+A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, and Zoom with Civis credential compatibility.
 
 ## Features
 
 - **Airtable Integration**: Automatic retry, batch operations, formula filtering
 - **OpenAI/ChatGPT**: Langchain integration with structured outputs
-- **Google Sheets**: READ-only configuration management
+- **Google Sheets**: Read-only configuration management
 - **BigQuery**: Full read/write data warehouse operations
+- **HelpScout**: Automated email processing — read conversations, reply, add notes, forward, close
+- **Zoom**: Meeting and webinar attendee retrieval — participants, registrants, absentees
 - **Unified Credentials**: `{CREDENTIAL_NAME}_PASSWORD` pattern for Civis compatibility
 - **Automatic Retry**: Built-in exponential backoff for all APIs
 - **Configuration as Code**: Manage settings via Google Sheets
@@ -46,6 +48,8 @@ AIRTABLE_API_KEY_PASSWORD=keyXXXXXXXXXXXXXX
 OPENAI_API_KEY_PASSWORD=sk-XXXXXXXXXXXXXXXX
 GOOGLE_SHEETS_CREDENTIALS_PASSWORD={"type":"service_account",...}
 BIGQUERY_CREDENTIALS_PASSWORD={"type":"service_account",...}
+HELPSCOUT_CREDENTIALS_PASSWORD={"app_id":"your-app-id","app_secret":"your-app-secret"}
+ZOOM_CREDENTIALS_PASSWORD={"account_id":"your-account-id","client_id":"your-client-id","client_secret":"your-client-secret"}
 ```
 
 ### Airtable Example
@@ -139,6 +143,63 @@ new_df = pd.DataFrame({'col1': [1, 2, 3], 'col2': ['a', 'b', 'c']})
 bq.load_dataframe(new_df, 'dataset.table', if_exists='append')
 ```
 
+### HelpScout Example
+
+```python
+from ccef_connections import HelpScoutConnector
+
+# Initialize connector (OAuth2 token fetched automatically)
+helpscout = HelpScoutConnector()
+
+# List mailboxes
+mailboxes = helpscout.list_mailboxes()
+for mb in mailboxes:
+    print(mb['id'], mb['name'])
+
+# List active conversations in a mailbox
+conversations = helpscout.list_conversations(
+    mailbox_id=12345, status='active'
+)
+
+# Read threads (messages) in a conversation
+threads = helpscout.list_threads(conversation_id=98765)
+for thread in threads:
+    print(thread.get('body', ''))
+
+# Reply, add a note, and close the conversation
+helpscout.reply_to_conversation(98765, "Thanks for reaching out!")
+helpscout.add_note(98765, "Resolved via automation.")
+helpscout.update_conversation_status(98765, 'closed')
+
+# Forward a conversation
+helpscout.forward_conversation(98765, to=["partner@example.com"])
+```
+
+### Zoom Example
+
+```python
+from ccef_connections import ZoomConnector
+
+# Initialize connector (Server-to-Server OAuth token fetched automatically)
+zoom = ZoomConnector()
+
+# List past meetings for a user
+meetings = zoom.list_meetings("me", meeting_type="previous_meetings")
+
+# Get attendee list from a past meeting
+participants = zoom.get_past_meeting_participants("12345678901")
+for p in participants:
+    print(p["name"], p["user_email"], p["duration"])
+
+# List webinars and get attendees
+webinars = zoom.list_webinars("me")
+attendees = zoom.get_past_webinar_participants("99887766554")
+
+# Get registrants and absentees for a webinar
+registrants = zoom.get_webinar_registrants(99887766554)
+absentees = zoom.get_webinar_absentees("webinar-uuid")
+```
+
 ### Configuration Management Example
 
 ```python
@@ -213,10 +274,12 @@ def main():
 
 All credentials follow the `{CREDENTIAL_NAME}_PASSWORD` naming convention:
 
-- `AIRTABLE_API_KEY_PASSWORD`
-- `OPENAI_API_KEY_PASSWORD`
-- `GOOGLE_SHEETS_CREDENTIALS_PASSWORD` (JSON)
-- `BIGQUERY_CREDENTIALS_PASSWORD` (JSON)
+- `AIRTABLE_API_KEY_PASSWORD` — API key string
+- `OPENAI_API_KEY_PASSWORD` — API key string
+- `GOOGLE_SHEETS_CREDENTIALS_PASSWORD` — service account JSON
+- `BIGQUERY_CREDENTIALS_PASSWORD` — service account JSON
+- `HELPSCOUT_CREDENTIALS_PASSWORD` — JSON with `app_id` and `app_secret`
+- `ZOOM_CREDENTIALS_PASSWORD` — JSON with `account_id`, `client_id`, and `client_secret`
 
 This pattern is compatible with Civis Docker environments while also working seamlessly in local development with `.env` files.
 
@@ -227,6 +290,8 @@ All connectors include automatic retry with exponential backoff:
 - **Airtable**: 5 retries, handles 5 req/sec rate limit
 - **OpenAI**: 5 retries, handles 429 rate limit errors
 - **Google APIs**: 5 retries, handles quota limits
+- **HelpScout**: 5 retries, handles rate limits with auto token refresh on 401
+- **Zoom**: 5 retries, handles rate limits with auto token refresh on 401
 - **Transient errors**: Automatic retry for network failures
 
 ### Context Manager Support
@@ -274,6 +339,30 @@ with AirtableConnector() as conn:
 - `load_dataframe(df, table_id, if_exists='append')` - Load DataFrame
 - `execute_dml(sql)` - Execute UPDATE/DELETE statements
 
+### HelpScoutConnector
+
+- `list_mailboxes()` - List all mailboxes
+- `list_conversations(mailbox_id, status=None, tag=None)` - List conversations with filters
+- `get_conversation(conversation_id)` - Get a single conversation
+- `list_threads(conversation_id)` - List all messages in a conversation
+- `reply_to_conversation(conversation_id, text, customer=None, draft=False)` - Reply to a conversation
+- `add_note(conversation_id, text)` - Add an internal note
+- `update_conversation_status(conversation_id, status)` - Set status (active/pending/closed)
+- `forward_conversation(conversation_id, to, note=None)` - Forward to external email
+
+### ZoomConnector
+
+- `get_user(user_id="me")` - Get user profile
+- `list_meetings(user_id="me", meeting_type="scheduled")` - List meetings
+- `get_meeting(meeting_id)` - Get meeting details
+- `get_past_meeting_participants(meeting_id)` - Get attendees from a completed meeting
+- `list_webinars(user_id="me")` - List webinars
+- `get_webinar(webinar_id)` - Get webinar details
+- `get_webinar_registrants(webinar_id, status="approved")` - List webinar registrants
+- `get_past_webinar_participants(webinar_id)` - Get attendees from a completed webinar
+- `get_webinar_absentees(webinar_id)` - Get registered no-shows
+- `get_meeting_registrants(meeting_id, status="approved")` - List meeting registrants
+
 ### ConfigManager
 
 - `get_config()` - Get all configuration
@@ -283,15 +372,26 @@ with AirtableConnector() as conn:
 
 ## Testing
 
+The library has 452 unit tests covering all connectors and core modules.
+
 ```bash
-# Run tests
+# Run all tests
 pytest tests/ -v
 
 # With coverage
 pytest tests/ -v --cov=ccef_connections
 
-# Run specific test file
-pytest tests/test_credentials.py -v
+# Run tests for a specific connector
+pytest tests/test_helpscout.py -v
+pytest tests/test_zoom.py -v
+pytest tests/test_airtable.py -v
+pytest tests/test_bigquery.py -v
+pytest tests/test_openai.py -v
+pytest tests/test_sheets.py -v
+
+# Run core and config tests
+pytest tests/test_core.py -v
+pytest tests/test_config.py -v
 ```
 
 ## Development
