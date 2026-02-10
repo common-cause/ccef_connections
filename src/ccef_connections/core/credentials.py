@@ -184,6 +184,18 @@ class CredentialManager:
             )
         return creds
 
+    def get_action_network_key(self) -> str:
+        """
+        Get the Action Network API key.
+
+        Returns:
+            The Action Network API key
+
+        Raises:
+            CredentialError: If the credential is missing
+        """
+        return str(self.get_credential("ACTION_NETWORK_API_KEY"))
+
     def get_zoom_credentials(self) -> Dict[str, Any]:
         """
         Get Zoom Server-to-Server OAuth credentials.

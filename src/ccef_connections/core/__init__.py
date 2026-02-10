@@ -4,6 +4,7 @@ from .base import BaseConnection
 from .credentials import CredentialManager, get_credential
 from .retry import (
     retry_with_backoff,
+    retry_action_network_operation,
     retry_airtable_operation,
     retry_openai_operation,
     retry_google_operation,
@@ -16,6 +17,7 @@ __all__ = [
     "CredentialManager",
     "get_credential",
     "retry_with_backoff",
+    "retry_action_network_operation",
     "retry_airtable_operation",
     "retry_openai_operation",
     "retry_google_operation",
