@@ -290,6 +290,65 @@ class ActionNetworkConnector(BaseConnection):
         result = self._request("PUT", f"/people/{person_id}", json_body=fields)
         return result or {}
 
+    @retry_action_network_operation
+    def unsubscribe_person(self, person_id: str) -> Dict[str, Any]:
+        """
+        Unsubscribe a person from the email list associated with this API key.
+
+        Uses ``PUT /people/{id}`` to set the primary email status to
+        ``"unsubscribed"``.  In a federated/networked Action Network
+        structure, the unsubscription is **scoped to the group whose API
+        key you are using** — it does not propagate up the network or
+        affect other groups.
+
+        Args:
+            person_id: Action Network person UUID
+
+        Returns:
+            Updated person resource
+        """
+        result = self._request(
+            "PUT",
+            f"/people/{person_id}",
+            json_body={
+                "email_addresses": [{"status": "unsubscribed"}],
+            },
+        )
+        return result or {}
+
+    @retry_action_network_operation
+    def unsubscribe_person_by_email(self, email: str) -> Dict[str, Any]:
+        """
+        Unsubscribe a person by email address (no UUID needed).
+
+        Uses the Person Signup Helper (``POST /people``) which
+        deduplicates by email address.  If the person exists, their
+        email status is set to ``"unsubscribed"``.  If the person does
+        not exist, they are added in an unsubscribed state.
+
+        In a federated/networked Action Network structure, the
+        unsubscription is **scoped to the group whose API key you are
+        using**.
+
+        Args:
+            email: Email address of the person to unsubscribe
+
+        Returns:
+            Person resource (existing or newly created)
+        """
+        result = self._request(
+            "POST",
+            "/people",
+            json_body={
+                "person": {
+                    "email_addresses": [
+                        {"address": email, "status": "unsubscribed"},
+                    ],
+                },
+            },
+        )
+        return result or {}
+
     # -- Tags -----------------------------------------------------------------
 
     @retry_action_network_operation

@@ -429,6 +429,8 @@ with AirtableConnector() as conn:
 - `get_person(person_id)` - Get a single person by UUID
 - `create_person(email, given_name=None, family_name=None, tags=None, **kwargs)` - Create/update person via signup helper. Deduplicates by email. Pass `tags=["tag1", "tag2"]` for inline tagging.
 - `update_person(person_id, fields)` - Update a person (PUT — sends full replacement of provided fields)
+- `unsubscribe_person(person_id)` - Unsubscribe a person by UUID (sets email status to `"unsubscribed"` via PUT). **Scoped to the API key's group** — does not affect other groups in a federated network.
+- `unsubscribe_person_by_email(email)` - Unsubscribe by email address (no UUID lookup needed). Uses the Person Signup Helper (POST). If the person doesn't exist, they are added in an unsubscribed state.
 
 **Tags & Taggings:**
 
@@ -626,9 +628,38 @@ for person in people:
     an.add_tagging(tag_id, [person_uri])
 ```
 
+### HelpScout unsubscribe request -> Action Network unsubscribe
+
+```python
+from ccef_connections import HelpScoutConnector, ActionNetworkConnector
+
+helpscout = HelpScoutConnector()
+an = ActionNetworkConnector()
+
+# 1. Read the HelpScout conversation requesting unsubscribe
+conversations = helpscout.list_conversations(mailbox_id=12345, status="active")
+for conv in conversations:
+    threads = helpscout.list_threads(conv["id"])
+    # (Your logic to detect unsubscribe intent in the thread body)
+
+    # 2. Extract the customer email
+    full_conv = helpscout.get_conversation(conv["id"])
+    customer_email = full_conv["primaryCustomer"]["email"]
+
+    # 3. Unsubscribe by email — no UUID lookup needed
+    #    Scoped to the national org's API key; does not affect state/local groups
+    an.unsubscribe_person_by_email(customer_email)
+
+    # 4. Close the conversation
+    helpscout.add_note(conv["id"], f"Unsubscribed {customer_email} from Action Network.")
+    helpscout.update_conversation_status(conv["id"], "closed")
+```
+
+**Federation note:** The unsubscription is scoped to whichever group's API key is configured in `ACTION_NETWORK_API_KEY_PASSWORD`. In CCEF's federated structure, use the national org's API key to unsubscribe from the national list. State/local groups and their lists are unaffected. Subscribing someone *does* propagate up the network, but unsubscribing does *not* — this asymmetry is by design in Action Network.
+
 ## Testing
 
-The library has 540 unit tests covering all connectors and core modules.
+The library has 544 unit tests covering all connectors and core modules.
 
 ```bash
 # Run all tests

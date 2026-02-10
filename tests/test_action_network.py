@@ -325,6 +325,66 @@ class TestPeople:
 
 
 # ==========================================================================
+# Unsubscribe
+# ==========================================================================
+
+
+class TestUnsubscribe:
+    @patch("ccef_connections.connectors.action_network.requests.request")
+    def test_unsubscribe_person_by_id(self, mock_req, connected):
+        mock_req.return_value = _make_response(
+            200,
+            {
+                "email_addresses": [
+                    {"address": "a@b.com", "status": "unsubscribed"}
+                ],
+            },
+        )
+        result = connected.unsubscribe_person("abc-123")
+        assert result["email_addresses"][0]["status"] == "unsubscribed"
+        assert mock_req.call_args.args[0] == "PUT"
+        body = mock_req.call_args.kwargs["json"]
+        assert body == {"email_addresses": [{"status": "unsubscribed"}]}
+
+    @patch("ccef_connections.connectors.action_network.requests.request")
+    def test_unsubscribe_person_by_id_sends_correct_url(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, {})
+        connected.unsubscribe_person("d91b4b2e-ae0e-4cd3-9ed7-deadbeef")
+        url = mock_req.call_args.args[1]
+        assert url.endswith("/people/d91b4b2e-ae0e-4cd3-9ed7-deadbeef")
+
+    @patch("ccef_connections.connectors.action_network.requests.request")
+    def test_unsubscribe_person_by_email(self, mock_req, connected):
+        mock_req.return_value = _make_response(
+            200,
+            {
+                "email_addresses": [
+                    {"address": "unsub@example.com", "status": "unsubscribed"}
+                ],
+            },
+        )
+        result = connected.unsubscribe_person_by_email("unsub@example.com")
+        assert result["email_addresses"][0]["status"] == "unsubscribed"
+        assert mock_req.call_args.args[0] == "POST"
+        body = mock_req.call_args.kwargs["json"]
+        assert body == {
+            "person": {
+                "email_addresses": [
+                    {"address": "unsub@example.com", "status": "unsubscribed"}
+                ],
+            },
+        }
+
+    @patch("ccef_connections.connectors.action_network.requests.request")
+    def test_unsubscribe_person_by_email_uses_signup_helper(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, {})
+        connected.unsubscribe_person_by_email("test@example.com")
+        url = mock_req.call_args.args[1]
+        assert url.endswith("/people")
+        assert mock_req.call_args.args[0] == "POST"
+
+
+# ==========================================================================
 # Tags
 # ==========================================================================
 
