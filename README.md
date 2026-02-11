@@ -8,7 +8,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 - **OpenAI/ChatGPT**: Langchain integration with structured outputs
 - **Google Sheets**: Read-only configuration management
 - **BigQuery**: Full read/write data warehouse operations
-- **HelpScout**: Automated email processing — read conversations, reply, add notes, forward, close
+- **HelpScout**: Automated email processing — read conversations, reply, add notes, close
 - **Zoom**: Meeting and webinar attendee retrieval — participants, registrants, absentees
 - **Action Network**: Full CRM access — people, tags, events, petitions, forms, fundraising, messages, and more
 - **Unified Credentials**: `{CREDENTIAL_NAME}_PASSWORD` pattern for Civis compatibility
@@ -171,13 +171,10 @@ threads = helpscout.list_threads(conversation_id=98765)
 for thread in threads:
     print(thread.get('body', ''))
 
-# Reply, add a note, and close the conversation
-helpscout.reply_to_conversation(98765, "Thanks for reaching out!")
+# Reply (customer_id required — get from get_conversation() → primaryCustomer → id)
+helpscout.reply_to_conversation(98765, "Thanks for reaching out!", customer_id=12345)
 helpscout.add_note(98765, "Resolved via automation.")
 helpscout.update_conversation_status(98765, 'closed')
-
-# Forward a conversation
-helpscout.forward_conversation(98765, to=["partner@example.com"])
 ```
 
 ### Zoom Example
@@ -395,10 +392,9 @@ with AirtableConnector() as conn:
 - `list_conversations(mailbox_id, status=None, tag=None)` - List conversations with filters
 - `get_conversation(conversation_id)` - Get a single conversation
 - `list_threads(conversation_id)` - List all messages in a conversation
-- `reply_to_conversation(conversation_id, text, customer=None, draft=False)` - Reply to a conversation
+- `reply_to_conversation(conversation_id, text, customer_id, draft=False)` - Reply to a conversation (customer_id from `get_conversation()` → `primaryCustomer` → `id`)
 - `add_note(conversation_id, text)` - Add an internal note
-- `update_conversation_status(conversation_id, status)` - Set status (active/pending/closed)
-- `forward_conversation(conversation_id, to, note=None)` - Forward to external email
+- `update_conversation_status(conversation_id, status)` - Set status via PATCH (active/pending/closed)
 
 ### ZoomConnector
 

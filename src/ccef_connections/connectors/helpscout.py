@@ -105,7 +105,7 @@ class HelpScoutConnector(BaseConnection):
         try:
             resp = requests.post(
                 HELPSCOUT_TOKEN_URL,
-                json={
+                data={
                     "grant_type": "client_credentials",
                     "client_id": app_id,
                     "client_secret": app_secret,
@@ -209,13 +209,13 @@ class HelpScoutConnector(BaseConnection):
                 raise AuthenticationError("HelpScout authentication failed after token refresh")
 
         if resp.status_code == 429:
-            retry_after = int(resp.headers.get("Retry-After", 10))
+            retry_after = int(resp.headers.get("X-RateLimit-Retry-After", 10))
             raise RateLimitError(
                 f"HelpScout rate limit exceeded, retry after {retry_after}s",
                 retry_after=retry_after,
             )
 
-        if resp.status_code == 204:
+        if resp.status_code in (201, 204):
             return None
 
         if resp.status_code >= 400:
@@ -374,7 +374,7 @@ class HelpScoutConnector(BaseConnection):
         self,
         conversation_id: int,
         text: str,
-        customer: Optional[Dict[str, str]] = None,
+        customer_id: int,
         draft: bool = False,
         **kwargs: Any,
     ) -> None:
@@ -384,20 +384,23 @@ class HelpScoutConnector(BaseConnection):
         Args:
             conversation_id: The conversation ID
             text: Reply body (HTML supported)
-            customer: Customer dict with 'email' key (uses conversation customer
-                if not provided)
+            customer_id: Customer ID (required by the HelpScout API;
+                available from get_conversation() → primaryCustomer → id)
             draft: If True, save as draft instead of sending
             **kwargs: Additional fields (cc, bcc, attachments, etc.)
 
         Examples:
             >>> connector.reply_to_conversation(
             ...     98765,
-            ...     "Thank you for reaching out. We'll look into this.",
+            ...     "Thank you for reaching out.",
+            ...     customer_id=12345,
             ... )
         """
-        body: Dict[str, Any] = {"text": text, "draft": draft}
-        if customer:
-            body["customer"] = customer
+        body: Dict[str, Any] = {
+            "customer": {"id": customer_id},
+            "text": text,
+            "draft": draft,
+        }
         body.update(kwargs)
         self._request("POST", f"/conversations/{conversation_id}/reply", json_body=body)
 
@@ -442,38 +445,8 @@ class HelpScoutConnector(BaseConnection):
                 f"Invalid status '{status}'. Must be one of: {', '.join(valid_statuses)}"
             )
         self._request(
-            "PUT",
+            "PATCH",
             f"/conversations/{conversation_id}",
             json_body={"op": "replace", "path": "/status", "value": status},
         )
 
-    @retry_helpscout_operation
-    def forward_conversation(
-        self,
-        conversation_id: int,
-        to: List[str],
-        note: Optional[str] = None,
-    ) -> None:
-        """
-        Forward a conversation to external email addresses.
-
-        Args:
-            conversation_id: The conversation ID
-            to: List of email addresses to forward to
-            note: Optional note to include with the forward
-
-        Examples:
-            >>> connector.forward_conversation(
-            ...     98765,
-            ...     to=["partner@example.com"],
-            ...     note="FYI - see thread below.",
-            ... )
-        """
-        body: Dict[str, Any] = {"to": to}
-        if note:
-            body["text"] = note
-        self._request(
-            "POST",
-            f"/conversations/{conversation_id}/forward",
-            json_body=body,
-        )

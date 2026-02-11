@@ -95,7 +95,7 @@ class TestConnect:
         assert connector._access_token == "fake-token-abc"
         mock_post.assert_called_once_with(
             HELPSCOUT_TOKEN_URL,
-            json={
+            data={
                 "grant_type": "client_credentials",
                 "client_id": "test-id",
                 "client_secret": "test-secret",
@@ -227,6 +227,17 @@ class TestRequest:
         assert call_kwargs.kwargs["json"] == {"text": "hi"}
 
     @patch("ccef_connections.connectors.helpscout.requests.request")
+    def test_201_returns_none(self, mock_request, connected_connector):
+        """Write operations (reply, note) return 201 with no body."""
+        mock_request.return_value = _make_response(201)
+
+        result = connected_connector._request(
+            "POST", "/conversations/1/notes", json_body={"text": "note"}
+        )
+
+        assert result is None
+
+    @patch("ccef_connections.connectors.helpscout.requests.request")
     @patch("ccef_connections.connectors.helpscout.requests.post")
     def test_401_triggers_refresh_and_retry(
         self, mock_post, mock_request, connected_connector
@@ -260,7 +271,7 @@ class TestRequest:
     @patch("ccef_connections.connectors.helpscout.requests.request")
     def test_429_raises_rate_limit(self, mock_request, connected_connector):
         mock_request.return_value = _make_response(
-            429, headers={"Retry-After": "30"}
+            429, headers={"X-RateLimit-Retry-After": "30"}
         )
 
         with pytest.raises(RateLimitError, match="retry after 30s") as exc_info:
@@ -538,40 +549,35 @@ class TestListThreads:
 class TestReplyToConversation:
     @patch("ccef_connections.connectors.helpscout.requests.request")
     def test_reply_basic(self, mock_request, connected_connector):
-        mock_request.return_value = _make_response(204)
+        mock_request.return_value = _make_response(201)
 
-        connected_connector.reply_to_conversation(100, "Thanks for writing in!")
+        connected_connector.reply_to_conversation(100, "Thanks for writing in!", customer_id=42)
 
         mock_request.assert_called_once()
         call_args = mock_request.call_args
         assert call_args[0][0] == "POST"
         assert "/conversations/100/reply" in call_args[0][1]
-        assert call_args.kwargs["json"]["text"] == "Thanks for writing in!"
-        assert call_args.kwargs["json"]["draft"] is False
+        body = call_args.kwargs["json"]
+        assert body["text"] == "Thanks for writing in!"
+        assert body["customer"] == {"id": 42}
+        assert body["draft"] is False
 
     @patch("ccef_connections.connectors.helpscout.requests.request")
     def test_reply_as_draft(self, mock_request, connected_connector):
-        mock_request.return_value = _make_response(204)
+        mock_request.return_value = _make_response(201)
 
-        connected_connector.reply_to_conversation(100, "Draft reply", draft=True)
+        connected_connector.reply_to_conversation(
+            100, "Draft reply", customer_id=42, draft=True
+        )
 
         assert mock_request.call_args.kwargs["json"]["draft"] is True
 
     @patch("ccef_connections.connectors.helpscout.requests.request")
-    def test_reply_with_customer(self, mock_request, connected_connector):
-        mock_request.return_value = _make_response(204)
-        customer = {"email": "user@example.com"}
-
-        connected_connector.reply_to_conversation(100, "Hello", customer=customer)
-
-        assert mock_request.call_args.kwargs["json"]["customer"] == customer
-
-    @patch("ccef_connections.connectors.helpscout.requests.request")
     def test_reply_with_kwargs(self, mock_request, connected_connector):
-        mock_request.return_value = _make_response(204)
+        mock_request.return_value = _make_response(201)
 
         connected_connector.reply_to_conversation(
-            100, "Hello", cc=["cc@example.com"], bcc=["bcc@example.com"]
+            100, "Hello", customer_id=42, cc=["cc@example.com"], bcc=["bcc@example.com"]
         )
 
         body = mock_request.call_args.kwargs["json"]
@@ -582,7 +588,7 @@ class TestReplyToConversation:
 class TestAddNote:
     @patch("ccef_connections.connectors.helpscout.requests.request")
     def test_add_note(self, mock_request, connected_connector):
-        mock_request.return_value = _make_response(204)
+        mock_request.return_value = _make_response(201)
 
         connected_connector.add_note(100, "Internal note here")
 
@@ -600,7 +606,7 @@ class TestUpdateConversationStatus:
         connected_connector.update_conversation_status(100, "closed")
 
         call_args = mock_request.call_args
-        assert call_args[0][0] == "PUT"
+        assert call_args[0][0] == "PATCH"
         assert "/conversations/100" in call_args[0][1]
         assert call_args.kwargs["json"]["value"] == "closed"
 
@@ -623,44 +629,6 @@ class TestUpdateConversationStatus:
     def test_update_status_invalid(self, connected_connector):
         with pytest.raises(ValueError, match="Invalid status 'spam'"):
             connected_connector.update_conversation_status(100, "spam")
-
-
-class TestForwardConversation:
-    @patch("ccef_connections.connectors.helpscout.requests.request")
-    def test_forward_basic(self, mock_request, connected_connector):
-        mock_request.return_value = _make_response(204)
-
-        connected_connector.forward_conversation(100, to=["fwd@example.com"])
-
-        call_args = mock_request.call_args
-        assert call_args[0][0] == "POST"
-        assert "/conversations/100/forward" in call_args[0][1]
-        assert call_args.kwargs["json"] == {"to": ["fwd@example.com"]}
-
-    @patch("ccef_connections.connectors.helpscout.requests.request")
-    def test_forward_with_note(self, mock_request, connected_connector):
-        mock_request.return_value = _make_response(204)
-
-        connected_connector.forward_conversation(
-            100, to=["fwd@example.com"], note="Please see attached."
-        )
-
-        body = mock_request.call_args.kwargs["json"]
-        assert body["to"] == ["fwd@example.com"]
-        assert body["text"] == "Please see attached."
-
-    @patch("ccef_connections.connectors.helpscout.requests.request")
-    def test_forward_multiple_recipients(self, mock_request, connected_connector):
-        mock_request.return_value = _make_response(204)
-
-        connected_connector.forward_conversation(
-            100, to=["a@example.com", "b@example.com"]
-        )
-
-        assert mock_request.call_args.kwargs["json"]["to"] == [
-            "a@example.com",
-            "b@example.com",
-        ]
 
 
 # ── Credentials ───────────────────────────────────────────────────────
