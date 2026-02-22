@@ -6,6 +6,7 @@ Google Sheets, and BigQuery with Civis credential compatibility.
 """
 
 from .config import ConfigManager
+from .connectors.action_builder import ActionBuilderConnector
 from .connectors.action_network import ActionNetworkConnector
 from .connectors.airtable import AirtableConnector
 from .connectors.bigquery import BigQueryConnector
@@ -29,6 +30,7 @@ __version__ = "0.1.0"
 
 __all__ = [
     # Main connectors
+    "ActionBuilderConnector",
     "ActionNetworkConnector",
     "AirtableConnector",
     "BigQueryConnector",

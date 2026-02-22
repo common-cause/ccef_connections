@@ -215,3 +215,30 @@ def retry_action_network_operation(func: Callable) -> Callable:
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )(func)
+
+
+def retry_action_builder_operation(func: Callable) -> Callable:
+    """
+    Decorator for Action Builder API operations with retry logic.
+
+    Action Builder has a rate limit of 4 requests per second.
+    This implements exponential backoff with 5 attempts.
+
+    Args:
+        func: The function to decorate
+
+    Returns:
+        Decorated function with Action Builder-specific retry logic
+
+    Examples:
+        >>> @retry_action_builder_operation
+        ... def list_campaigns():
+        ...     return client.get("/campaigns")
+    """
+    return retry(
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=2.0, min=1.0, max=60.0),
+        retry=retry_if_exception_type((ConnectionError, RateLimitError, Exception)),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )(func)

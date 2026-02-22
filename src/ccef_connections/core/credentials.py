@@ -221,6 +221,29 @@ class CredentialManager:
             )
         return creds
 
+    def get_action_builder_credentials(self) -> Dict[str, Any]:
+        """
+        Get Action Builder API credentials.
+
+        Returns:
+            Dict with 'api_token' and 'subdomain' keys
+
+        Raises:
+            CredentialError: If the credential is missing, invalid JSON,
+                or missing required keys
+        """
+        creds = self.get_credential("ACTION_BUILDER_CREDENTIALS", is_json=True)
+        if not isinstance(creds, dict):
+            raise CredentialError(
+                "ACTION_BUILDER_CREDENTIALS_PASSWORD must be a valid JSON object"
+            )
+        missing = [k for k in ("api_token", "subdomain") if k not in creds]
+        if missing:
+            raise CredentialError(
+                f"ACTION_BUILDER_CREDENTIALS_PASSWORD missing required keys: {', '.join(missing)}"
+            )
+        return creds
+
     def clear_cache(self) -> None:
         """Clear the credentials cache. Useful for testing or credential rotation."""
         self._credentials_cache.clear()
