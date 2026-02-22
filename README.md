@@ -1,6 +1,6 @@
 # CCEF Connections
 
-A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zoom, and Action Network with Civis credential compatibility.
+A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zoom, Action Network, and Action Builder with Civis credential compatibility.
 
 ## Features
 
@@ -11,6 +11,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 - **HelpScout**: Automated email processing — read conversations, reply, add notes, close
 - **Zoom**: Meeting and webinar attendee retrieval — participants, registrants, absentees
 - **Action Network**: Full CRM access — people, tags, events, petitions, forms, fundraising, messages, and more
+- **Action Builder**: Field organizing and relationship mapping — campaigns, people/entities, tags, taggings, and connections
 - **Unified Credentials**: `{CREDENTIAL_NAME}_PASSWORD` pattern for Civis compatibility
 - **Automatic Retry**: Built-in exponential backoff for all APIs
 - **Configuration as Code**: Manage settings via Google Sheets
@@ -55,6 +56,7 @@ BIGQUERY_CREDENTIALS_PASSWORD={"type":"service_account",...}
 HELPSCOUT_CREDENTIALS_PASSWORD={"app_id":"your-app-id","app_secret":"your-app-secret"}
 ZOOM_CREDENTIALS_PASSWORD={"account_id":"your-account-id","client_id":"your-client-id","client_secret":"your-client-secret"}
 ACTION_NETWORK_API_KEY_PASSWORD=your-action-network-api-key
+ACTION_BUILDER_CREDENTIALS_PASSWORD={"api_token":"your-api-token","subdomain":"yourorg"}
 ```
 
 ### Airtable Example
@@ -234,6 +236,48 @@ an.add_tagging(tag_id, [person_uri])
 an.create_event("Town Hall", start_date="2026-04-01T18:00:00Z")
 ```
 
+### Action Builder Example
+
+```python
+from ccef_connections import ActionBuilderConnector
+
+# Initialize connector (credentials loaded automatically, auto-connects on first call)
+ab = ActionBuilderConnector()
+
+# List all campaigns accessible to the API token
+campaigns = ab.list_campaigns()
+campaign_id = campaigns[0]["id"]
+
+# List people/entities in a campaign
+people = ab.list_people(campaign_id)
+
+# Fetch people modified since a given date
+recent = ab.list_people(campaign_id, modified_since="2026-01-01T00:00:00")
+
+# Create a person
+person = ab.create_person(
+    campaign_id,
+    given_name="Jane",
+    family_name="Doe",
+    email_addresses=[{"address": "jane@example.com"}],
+)
+person_id = person["id"]
+
+# List tags and create a new one
+tags = ab.list_tags(campaign_id)
+tag = ab.create_tag(campaign_id, name="Volunteer", section="Status", field_type="checkbox")
+tag_id = tag["id"]
+
+# List and remove taggings
+taggings = ab.list_taggings(campaign_id, tag_id)
+person_taggings = ab.list_person_taggings(campaign_id, person_id)
+ab.delete_tagging(campaign_id, tag_id, taggings[0]["id"])
+
+# List connections for a person and mark one inactive
+connections = ab.list_connections(campaign_id, person_id)
+ab.update_connection(campaign_id, person_id, connections[0]["id"], inactive=True)
+```
+
 ### Configuration Management Example
 
 ```python
@@ -315,6 +359,7 @@ All credentials follow the `{CREDENTIAL_NAME}_PASSWORD` naming convention:
 - `HELPSCOUT_CREDENTIALS_PASSWORD` — JSON with `app_id` and `app_secret`
 - `ZOOM_CREDENTIALS_PASSWORD` — JSON with `account_id`, `client_id`, and `client_secret`
 - `ACTION_NETWORK_API_KEY_PASSWORD` — API key string
+- `ACTION_BUILDER_CREDENTIALS_PASSWORD` — JSON with `api_token` and `subdomain`
 
 This pattern is compatible with Civis Docker environments while also working seamlessly in local development with `.env` files.
 
@@ -328,6 +373,7 @@ All connectors include automatic retry with exponential backoff:
 - **HelpScout**: 5 retries, handles rate limits with auto token refresh on 401
 - **Zoom**: 5 retries, handles rate limits with auto token refresh on 401
 - **Action Network**: 5 retries, handles 429 rate limits (4 req/s)
+- **Action Builder**: 5 retries, handles 429 rate limits (4 req/s)
 - **Transient errors**: Automatic retry for network failures
 
 ### Auto-Connect Behavior
@@ -465,6 +511,59 @@ with AirtableConnector() as conn:
 - `list_custom_fields()` / `get_custom_field(id)` / `create_custom_field(name, format)` / `update_custom_field(id, fields)` - Custom field definitions (metadata)
 - `list_event_campaigns()` / `get_event_campaign(id)` / `create_event_campaign(title, ...)` / `update_event_campaign(id, fields)` - Event campaigns
 - `list_campaign_events(campaign_id)` / `create_campaign_event(campaign_id, event_data)` - Events within campaigns
+
+### ActionBuilderConnector
+
+Action Builder is a relationship-mapping and field organizing platform. All resources are scoped to a campaign. The API uses OSDI v1.2.0 with page-based pagination (`page` / `per_page` / `total_pages`).
+
+**Important concepts:**
+
+- **Campaign-scoped**: Every method (except `list_campaigns` / `get_campaign`) requires a `campaign_id` parameter.
+- **Connections are read/update only**: The API does not support creating connections — use the Connection Helper UI instead. You can list connections, fetch individual ones, and toggle `inactive` status.
+- **Taggings are read/delete only**: The API does not support creating or updating taggings.
+- **`modified_since` filter**: `list_campaigns()` and `list_people()` accept an optional `modified_since` ISO-8601 string that translates to an OData filter (`modified_date gt '...'`).
+
+**Campaigns:**
+
+- `list_campaigns(modified_since=None)` - List all campaigns
+- `get_campaign(campaign_id)` - Get a single campaign
+
+**Entity Types (read-only):**
+
+- `list_entity_types(campaign_id)` - List entity types for a campaign
+- `get_entity_type(campaign_id, type_id)` - Get a single entity type
+
+**Connection Types (read-only):**
+
+- `list_connection_types(campaign_id)` - List connection types for a campaign
+- `get_connection_type(campaign_id, type_id)` - Get a single connection type
+
+**People / Entities:**
+
+- `list_people(campaign_id, modified_since=None, **filters)` - List all people/entities
+- `get_person(campaign_id, person_id)` - Get a single person/entity
+- `create_person(campaign_id, **fields)` - Create a person/entity
+- `update_person(campaign_id, person_id, fields)` - Update a person/entity
+- `delete_person(campaign_id, person_id)` - Delete a person/entity
+
+**Tags:**
+
+- `list_tags(campaign_id)` - List all tags
+- `get_tag(campaign_id, tag_id)` - Get a single tag
+- `create_tag(campaign_id, name, section, field_type, **kwargs)` - Create a tag/field
+- `delete_tag(campaign_id, tag_id)` - Delete a tag
+
+**Taggings (read + delete only):**
+
+- `list_taggings(campaign_id, tag_id)` - List taggings for a tag
+- `list_person_taggings(campaign_id, person_id)` - List taggings for a person
+- `delete_tagging(campaign_id, tag_id, tagging_id)` - Remove a tagging
+
+**Connections (read + update only):**
+
+- `list_connections(campaign_id, person_id)` - List connections for a person
+- `get_connection(campaign_id, person_id, connection_id)` - Get a single connection
+- `update_connection(campaign_id, person_id, connection_id, inactive)` - Toggle inactive status
 
 ### ConfigManager
 
@@ -655,7 +754,7 @@ for conv in conversations:
 
 ## Testing
 
-The library has 544 unit tests covering all connectors and core modules.
+The library has 598 unit tests covering all connectors and core modules.
 
 ```bash
 # Run all tests
@@ -665,9 +764,10 @@ pytest tests/ -v
 pytest tests/ -v --cov=ccef_connections
 
 # Run tests for a specific connector
+pytest tests/test_action_builder.py -v
+pytest tests/test_action_network.py -v
 pytest tests/test_helpscout.py -v
 pytest tests/test_zoom.py -v
-pytest tests/test_action_network.py -v
 pytest tests/test_airtable.py -v
 pytest tests/test_bigquery.py -v
 pytest tests/test_openai.py -v
