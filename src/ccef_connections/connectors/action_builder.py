@@ -587,6 +587,74 @@ class ActionBuilderConnector(BaseConnection):
         return result or {}
 
     @retry_action_builder_operation
+    def update_entity_with_tags(
+        self,
+        campaign_id: str,
+        entity_interact_id: str,
+        add_tags: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """
+        Update an existing entity's tags via the Person Signup Helper.
+
+        Posts to the Person Signup Helper endpoint with ``identifiers`` set to
+        the entity's interact_id, which tells ActionBuilder to update the
+        existing entity rather than create a new one.
+
+        Args:
+            campaign_id: Campaign UUID (interact_id)
+            entity_interact_id: Entity interact_id UUID (36 chars)
+            add_tags: List of tag dicts, each with keys:
+                ``action_builder:section``, ``action_builder:field``, ``name``
+
+        Returns:
+            Response dict from the API
+        """
+        result = self._request(
+            "POST",
+            f"/campaigns/{campaign_id}/people",
+            json_body={
+                "person": {
+                    "identifiers": [f"action_builder:{entity_interact_id}"]
+                },
+                "add_tags": add_tags,
+            },
+        )
+        return result or {}
+
+    @retry_action_builder_operation
+    def insert_entity(
+        self,
+        campaign_id: str,
+        person_data: Dict[str, Any],
+        add_tags: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Insert a new entity via the Person Signup Helper.
+
+        Posts to the Person Signup Helper endpoint without ``identifiers``,
+        which creates a new entity in ActionBuilder.
+
+        Args:
+            campaign_id: Campaign UUID (interact_id)
+            person_data: OSDI person fields dict (given_name, family_name,
+                email_addresses, phone_numbers, postal_addresses, etc.)
+            add_tags: Optional list of tag dicts, each with keys:
+                ``action_builder:section``, ``action_builder:field``, ``name``
+
+        Returns:
+            Response dict from the API
+        """
+        body: Dict[str, Any] = {"person": person_data}
+        if add_tags:
+            body["add_tags"] = add_tags
+        result = self._request(
+            "POST",
+            f"/campaigns/{campaign_id}/people",
+            json_body=body,
+        )
+        return result or {}
+
+    @retry_action_builder_operation
     def update_connection(
         self,
         campaign_id: str,
