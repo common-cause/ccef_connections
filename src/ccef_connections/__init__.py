@@ -12,6 +12,7 @@ from .connectors.airtable import AirtableConnector
 from .connectors.bigquery import BigQueryConnector
 from .connectors.helpscout import HelpScoutConnector
 from .connectors.openai import OpenAIConnector
+from .connectors.ptv import PTVConnector
 from .connectors.sheets import SheetsConnector
 from .connectors.zoom import ZoomConnector
 from .core.credentials import CredentialManager, get_credential
@@ -36,6 +37,7 @@ __all__ = [
     "BigQueryConnector",
     "HelpScoutConnector",
     "OpenAIConnector",
+    "PTVConnector",
     "SheetsConnector",
     "ZoomConnector",
     # Configuration

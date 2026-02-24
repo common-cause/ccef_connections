@@ -221,6 +221,18 @@ class CredentialManager:
             )
         return creds
 
+    def get_ptv_api_key(self) -> str:
+        """
+        Get the Protect the Vote (PTV) API key.
+
+        Returns:
+            The PTV API key
+
+        Raises:
+            CredentialError: If the credential is missing
+        """
+        return str(self.get_credential("PTV_API_KEY"))
+
     def get_action_builder_credentials(self) -> Dict[str, Any]:
         """
         Get Action Builder API credentials.

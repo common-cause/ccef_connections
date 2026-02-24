@@ -1,6 +1,6 @@
 # CCEF Connections
 
-A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zoom, Action Network, and Action Builder with Civis credential compatibility.
+A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zoom, Action Network, Action Builder, and Protect the Vote (PTV) with Civis credential compatibility.
 
 ## Features
 
@@ -12,6 +12,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 - **Zoom**: Meeting and webinar attendee retrieval — participants, registrants, absentees
 - **Action Network**: Full CRM access — people, tags, events, petitions, forms, fundraising, messages, and more
 - **Action Builder**: Field organizing and relationship mapping — campaigns, people/entities, tags, taggings, and connections
+- **Protect the Vote (PTV)**: Election protection shift data — volunteer signups, registered volunteers, and shift availability across all states
 - **Unified Credentials**: `{CREDENTIAL_NAME}_PASSWORD` pattern for Civis compatibility
 - **Automatic Retry**: Built-in exponential backoff for all APIs
 - **Configuration as Code**: Manage settings via Google Sheets
@@ -57,6 +58,7 @@ HELPSCOUT_CREDENTIALS_PASSWORD={"app_id":"your-app-id","app_secret":"your-app-se
 ZOOM_CREDENTIALS_PASSWORD={"account_id":"your-account-id","client_id":"your-client-id","client_secret":"your-client-secret"}
 ACTION_NETWORK_API_KEY_PASSWORD=your-action-network-api-key
 ACTION_BUILDER_CREDENTIALS_PASSWORD={"api_token":"your-api-token","subdomain":"yourorg"}
+PTV_API_KEY_PASSWORD=your-ptv-api-key
 ```
 
 ### Airtable Example
@@ -278,6 +280,43 @@ connections = ab.list_connections(campaign_id, person_id)
 ab.update_connection(campaign_id, person_id, connections[0]["id"], inactive=True)
 ```
 
+### Protect the Vote (PTV) Example
+
+```python
+from ccef_connections import PTVConnector
+
+# Initialize connector (loads PTV_API_KEY_PASSWORD automatically)
+ptv = PTVConnector()
+
+# Fetch volunteer signups for a single state
+signups = ptv.get_shift_volunteers("PA")
+# Returns list of dicts: shift_id, inserted_at, date, start_time, end_time,
+# timezone, locations, county, first_name, last_name, phone_number, email, role, source
+
+# Fetch all registered volunteers for a single state
+volunteers = ptv.get_users("GA")
+# Returns list of dicts: id, email, join_date, phone_number, first_name,
+# last_name, county, zip_code, source_code, regional_admin, shifted, training, role
+
+# Fetch shift availability and fill rates for a single state
+shifts = ptv.get_state_shifts("AZ")
+# Returns list of dicts: id, date, start_time, end_time,
+# locations_string, volunteers, filled
+
+# Fetch across all states — 'state' key is added to each row automatically
+state_list = ["PA", "GA", "AZ", "NV", "WI", "MI"]
+
+all_signups = ptv.get_all_shift_volunteers(state_list)
+all_volunteers = ptv.get_all_users(state_list)
+all_shifts = ptv.get_all_state_shifts(state_list)
+
+# Context manager usage
+with PTVConnector() as ptv:
+    signups = ptv.get_all_shift_volunteers(state_list)
+```
+
+**Note:** When a state has no data, the PTV API returns a JSON error body instead of CSV. The connector handles this transparently and returns an empty list for that state.
+
 ### Configuration Management Example
 
 ```python
@@ -360,6 +399,7 @@ All credentials follow the `{CREDENTIAL_NAME}_PASSWORD` naming convention:
 - `ZOOM_CREDENTIALS_PASSWORD` — JSON with `account_id`, `client_id`, and `client_secret`
 - `ACTION_NETWORK_API_KEY_PASSWORD` — API key string
 - `ACTION_BUILDER_CREDENTIALS_PASSWORD` — JSON with `api_token` and `subdomain`
+- `PTV_API_KEY_PASSWORD` — API key string
 
 This pattern is compatible with Civis Docker environments while also working seamlessly in local development with `.env` files.
 
@@ -374,6 +414,7 @@ All connectors include automatic retry with exponential backoff:
 - **Zoom**: 5 retries, handles rate limits with auto token refresh on 401
 - **Action Network**: 5 retries, handles 429 rate limits (4 req/s)
 - **Action Builder**: 5 retries, handles 429 rate limits (4 req/s)
+- **PTV**: 5 retries, handles transient connection errors and rate limits
 - **Transient errors**: Automatic retry for network failures
 
 ### Auto-Connect Behavior
@@ -564,6 +605,27 @@ Action Builder is a relationship-mapping and field organizing platform. All reso
 - `list_connections(campaign_id, person_id)` - List connections for a person
 - `get_connection(campaign_id, person_id, connection_id)` - Get a single connection
 - `update_connection(campaign_id, person_id, connection_id, inactive)` - Toggle inactive status
+
+### PTVConnector
+
+Provides read access to Protect the Vote shift scheduling data across three endpoints, all scoped per state.
+
+**Credential:** `PTV_API_KEY_PASSWORD` (plain API key string)
+
+**Shift volunteers** (`shift_volunteers_csv`):
+
+- `get_shift_volunteers(state_code)` - Fetch volunteer signups for one state. Returns list of dicts with keys: `shift_id`, `inserted_at`, `date`, `start_time`, `end_time`, `timezone`, `locations`, `county`, `first_name`, `last_name`, `phone_number`, `email`, `role`, `source`
+- `get_all_shift_volunteers(state_codes)` - Fetch signups across multiple states. Adds `state` key to each row.
+
+**Registered volunteers** (`users_csv`):
+
+- `get_users(state_code)` - Fetch all registered volunteers for one state. Returns list of dicts with keys: `id`, `email`, `join_date`, `phone_number`, `first_name`, `last_name`, `county`, `zip_code`, `source_code`, `regional_admin`, `shifted`, `training`, `role`
+- `get_all_users(state_codes)` - Fetch volunteers across multiple states. Adds `state` key to each row.
+
+**Shift availability** (`state_shifts_csv`):
+
+- `get_state_shifts(state_code)` - Fetch all shifts and fill rates for one state. Returns list of dicts with keys: `id`, `date`, `start_time`, `end_time`, `locations_string`, `volunteers`, `filled`
+- `get_all_state_shifts(state_codes)` - Fetch shifts across multiple states. Adds `state` key to each row.
 
 ### ConfigManager
 

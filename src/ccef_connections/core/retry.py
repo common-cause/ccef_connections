@@ -217,12 +217,42 @@ def retry_action_network_operation(func: Callable) -> Callable:
     )(func)
 
 
+def retry_ptv_operation(func: Callable) -> Callable:
+    """
+    Decorator for Protect the Vote (PTV) API operations with retry logic.
+
+    Retries on transient connection errors and rate limits with
+    exponential backoff, matching the pattern used by other API decorators.
+
+    Args:
+        func: The function to decorate
+
+    Returns:
+        Decorated function with PTV-specific retry logic
+
+    Examples:
+        >>> @retry_ptv_operation
+        ... def get_shift_volunteers(state_code):
+        ...     return client.fetch_csv(state_code)
+    """
+    return retry(
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=2.0, min=1.0, max=60.0),
+        retry=retry_if_exception_type((ConnectionError, RateLimitError)),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )(func)
+
+
 def retry_action_builder_operation(func: Callable) -> Callable:
     """
     Decorator for Action Builder API operations with retry logic.
 
     Action Builder has a rate limit of 4 requests per second.
-    This implements exponential backoff with 5 attempts.
+    Only retries on RateLimitError (429) — the only genuinely transient
+    condition. ConnectionError wraps HTTP 4xx/5xx responses and should
+    fail immediately so the caller sees the real error without waiting
+    through exponential backoff.
 
     Args:
         func: The function to decorate
@@ -238,7 +268,7 @@ def retry_action_builder_operation(func: Callable) -> Callable:
     return retry(
         stop=stop_after_attempt(5),
         wait=wait_exponential(multiplier=2.0, min=1.0, max=60.0),
-        retry=retry_if_exception_type((ConnectionError, RateLimitError, Exception)),
+        retry=retry_if_exception_type(RateLimitError),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )(func)
