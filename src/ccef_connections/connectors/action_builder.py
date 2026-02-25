@@ -12,6 +12,21 @@ cursor-based like Action Network.
 API limitations:
 - Connections can only be read or updated (no create via API)
 - Taggings can only be read or deleted (no create/update via API)
+
+Tag update pattern (update_records workflow):
+  Replacing an existing tag value requires two API calls:
+    1. DELETE /campaigns/{id}/tags/{tag_id}/taggings/{tagging_id}
+       — removes the existing tagging. 404 is treated as success
+         (tagging already absent = desired state achieved).
+    2. POST /campaigns/{id}/people  (Person Signup Helper)
+       — writes the new value via add_tags + identifiers.
+  NOTE: There is no 'remove_tags' parameter in the POST body.
+  Passing one causes a 500 Internal Server Error from the AB API.
+
+Retry policy:
+  retry_action_builder_operation retries only on RateLimitError (429).
+  All other errors (including 4xx/5xx ConnectionError) fail immediately
+  so callers see the real error without waiting through backoff.
 """
 
 import logging
@@ -335,7 +350,7 @@ class ActionBuilderConnector(BaseConnection):
             params["filter"] = f"modified_date gt '{modified_since}'"
         return self._paginate(
             f"/campaigns/{campaign_id}/people",
-            "action_builder:entities",
+            "osdi:people",
             params or None,
         )
 
@@ -423,7 +438,7 @@ class ActionBuilderConnector(BaseConnection):
         """
         return self._paginate(
             f"/campaigns/{campaign_id}/tags",
-            "action_builder:tags",
+            "osdi:tags",
         )
 
     @retry_action_builder_operation
@@ -532,15 +547,27 @@ class ActionBuilderConnector(BaseConnection):
         """
         Delete a tagging.
 
+        A 404 response is treated as success: if the tagging no longer exists
+        (e.g. deleted by a previous sync run), the desired state is already
+        achieved and we can proceed.
+
         Args:
             campaign_id: Campaign UUID
             tag_id: Tag UUID
             tagging_id: Tagging UUID
         """
-        self._request(
-            "DELETE",
-            f"/campaigns/{campaign_id}/tags/{tag_id}/taggings/{tagging_id}",
-        )
+        try:
+            self._request(
+                "DELETE",
+                f"/campaigns/{campaign_id}/tags/{tag_id}/taggings/{tagging_id}",
+            )
+        except ConnectionError as e:
+            if "404" in str(e):
+                logger.debug(
+                    f"delete_tagging: tagging {tagging_id} already absent (404) — skipping"
+                )
+                return
+            raise
 
     # -- Connections (read + update only) -------------------------------------
 
@@ -599,6 +626,9 @@ class ActionBuilderConnector(BaseConnection):
         Posts to the Person Signup Helper endpoint with ``identifiers`` set to
         the entity's interact_id, which tells ActionBuilder to update the
         existing entity rather than create a new one.
+
+        To replace an existing tag value, first call delete_tagging() for each
+        existing tagging to remove, then call this method to add the new value.
 
         Args:
             campaign_id: Campaign UUID (interact_id)
