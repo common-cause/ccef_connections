@@ -420,7 +420,7 @@ class TestPeople:
     def test_list_people(self, mock_req, connected):
         mock_req.return_value = _make_response(
             200,
-            _page("action_builder:entities", [{"id": PERSON_ID}]),
+            _page("osdi:people", [{"id": PERSON_ID}]),
         )
         result = connected.list_people(CAMPAIGN_ID)
         assert len(result) == 1
@@ -429,7 +429,7 @@ class TestPeople:
     @patch("ccef_connections.connectors.action_builder.requests.request")
     def test_list_people_modified_since(self, mock_req, connected):
         mock_req.return_value = _make_response(
-            200, _page("action_builder:entities", [])
+            200, _page("osdi:people", [])
         )
         connected.list_people(CAMPAIGN_ID, modified_since="2026-01-01T00:00:00")
         call_params = mock_req.call_args.kwargs["params"]
@@ -503,7 +503,7 @@ class TestTags:
     def test_list_tags(self, mock_req, connected):
         mock_req.return_value = _make_response(
             200,
-            _page("action_builder:tags", [{"id": TAG_ID}]),
+            _page("osdi:tags", [{"id": TAG_ID}]),
         )
         result = connected.list_tags(CAMPAIGN_ID)
         assert len(result) == 1
@@ -735,6 +735,16 @@ class TestUpdateEntityWithTags:
             CAMPAIGN_ID, ENTITY_INTERACT_ID, SAMPLE_ADD_TAGS
         )
         assert result == {}
+
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_remove_tags_not_in_body(self, mock_req, connected):
+        """remove_tags is not a valid AB API parameter — must never appear in POST body."""
+        mock_req.return_value = _make_response(200, {"id": PERSON_ID})
+        connected.update_entity_with_tags(
+            CAMPAIGN_ID, ENTITY_INTERACT_ID, SAMPLE_ADD_TAGS
+        )
+        call_json = mock_req.call_args.kwargs["json"]
+        assert "remove_tags" not in call_json
 
 
 # ==========================================================================
