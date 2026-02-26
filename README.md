@@ -1,6 +1,6 @@
 # CCEF Connections
 
-A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zoom, Action Network, Action Builder, and Protect the Vote (PTV) with Civis credential compatibility.
+A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zoom, Action Network, Action Builder, Protect the Vote (PTV), and ROI CRM with Civis credential compatibility.
 
 ## Features
 
@@ -13,6 +13,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 - **Action Network**: Full CRM access — people, tags, events, petitions, forms, fundraising, messages, and more
 - **Action Builder**: Field organizing and relationship mapping — campaigns, people/entities, tags, taggings, and connections
 - **Protect the Vote (PTV)**: Election protection shift data — volunteer signups, registered volunteers, and shift availability across all states
+- **ROI CRM**: Fundraising CRM — donors, donations, pledges, memberships, payment tokens, orders, contact info, and code tables
 - **Unified Credentials**: `{CREDENTIAL_NAME}_PASSWORD` pattern for Civis compatibility
 - **Automatic Retry**: Built-in exponential backoff for all APIs
 - **Configuration as Code**: Manage settings via Google Sheets
@@ -59,6 +60,7 @@ ZOOM_CREDENTIALS_PASSWORD={"account_id":"your-account-id","client_id":"your-clie
 ACTION_NETWORK_API_KEY_PASSWORD=your-action-network-api-key
 ACTION_BUILDER_CREDENTIALS_PASSWORD={"api_token":"your-api-token","subdomain":"yourorg"}
 PTV_API_KEY_PASSWORD=your-ptv-api-key
+ROI_CRM_CREDENTIALS_PASSWORD={"client_id":"your-client-id","client_secret":"your-client-secret","audience":"https://app.roicrm.net/api/1.0","roi_client_code":"YOUR_ORG"}
 ```
 
 ### Airtable Example
@@ -317,6 +319,49 @@ with PTVConnector() as ptv:
 
 **Note:** When a state has no data, the PTV API returns a JSON error body instead of CSV. The connector handles this transparently and returns an empty list for that state.
 
+### ROI CRM Example
+
+```python
+from ccef_connections import ROICRMConnector
+
+# Initialize connector (OAuth2 token fetched automatically via Auth0)
+roi = ROICRMConnector()
+
+# Search for a donor by name or email
+donors = roi.search_donors(last_name="Smith", email="jane@example.com")
+donor_id = donors[0]["id"]
+
+# Get full donor record
+donor = roi.get_donor(donor_id)
+
+# Get donation summary and history
+summary = roi.get_donation_summary(donor_id)
+donations = roi.list_donations(donor_id)
+
+# Create a donation
+new_donation = roi.create_donation(donor_id, amount=100.00, fund_code="GEN")
+
+# Work with pledges
+pledges = roi.list_pledges(donor_id)
+new_pledge = roi.create_pledge(donor_id, amount=25.00, frequency="monthly")
+roi.update_pledge(donor_id, new_pledge["pledge_id"], amount=50.00)
+
+# Look up memberships
+memberships = roi.list_memberships(donor_id)
+mvault = roi.get_mvault(donor_id)
+
+# Add a comment and flag
+roi.add_comment(donor_id, text="Spoke with donor about major gift opportunity.")
+roi.add_donor_flag(donor_id, flag_code="MAJOR_PROSPECT")
+
+# Look up valid codes for a resource type
+fund_codes = roi.get_codes("donations")
+
+# Context manager usage
+with ROICRMConnector() as roi:
+    donors = roi.search_donors(zip="20001")
+```
+
 ### Configuration Management Example
 
 ```python
@@ -400,6 +445,7 @@ All credentials follow the `{CREDENTIAL_NAME}_PASSWORD` naming convention:
 - `ACTION_NETWORK_API_KEY_PASSWORD` — API key string
 - `ACTION_BUILDER_CREDENTIALS_PASSWORD` — JSON with `api_token` and `subdomain`
 - `PTV_API_KEY_PASSWORD` — API key string
+- `ROI_CRM_CREDENTIALS_PASSWORD` — JSON with `client_id`, `client_secret`, `audience`, and `roi_client_code`
 
 This pattern is compatible with Civis Docker environments while also working seamlessly in local development with `.env` files.
 
@@ -415,6 +461,7 @@ All connectors include automatic retry with exponential backoff:
 - **Action Network**: 5 retries, handles 429 rate limits (4 req/s)
 - **Action Builder**: 5 retries, handles 429 rate limits (4 req/s)
 - **PTV**: 5 retries, handles transient connection errors and rate limits
+- **ROI CRM**: 5 retries on 429 rate limit only (500 req per 5-min window); other HTTP errors surface immediately
 - **Transient errors**: Automatic retry for network failures
 
 ### Auto-Connect Behavior
@@ -563,6 +610,7 @@ Action Builder is a relationship-mapping and field organizing platform. All reso
 - **Connections are read/update only**: The API does not support creating connections — use the Connection Helper UI instead. You can list connections, fetch individual ones, and toggle `inactive` status.
 - **Taggings are read/delete only**: The API does not support creating or updating taggings.
 - **`modified_since` filter**: `list_campaigns()` and `list_people()` accept an optional `modified_since` ISO-8601 string that translates to an OData filter (`modified_date gt '...'`).
+- **OSDI vs `action_builder:` embedded keys**: Action Builder's HAL+JSON responses use two different namespace prefixes in `_embedded`. Per the official API docs: resources defined in the OSDI standard use `osdi:` (people, tags, taggings); resources specific to Action Builder use `action_builder:` (campaigns, entity_types, connection_types, connections). This matters if you inspect raw API responses directly.
 
 **Campaigns:**
 
@@ -626,6 +674,85 @@ Provides read access to Protect the Vote shift scheduling data across three endp
 
 - `get_state_shifts(state_code)` - Fetch all shifts and fill rates for one state. Returns list of dicts with keys: `id`, `date`, `start_time`, `end_time`, `locations_string`, `volunteers`, `filled`
 - `get_all_state_shifts(state_codes)` - Fetch shifts across multiple states. Adds `state` key to each row.
+
+### ROICRMConnector
+
+Provides access to ROI CRM donor and fundraising data via OAuth2 Client Credentials (Auth0). Token is valid for 24 hours and refreshes automatically on expiry or 401.
+
+**Credential:** `ROI_CRM_CREDENTIALS_PASSWORD` — JSON with `client_id`, `client_secret`, `audience`, and `roi_client_code`
+
+**Auth:** `https://roisolutions.us.auth0.com/oauth/token` (Client Credentials grant). Base URL: `https://app.roicrm.net/api/1.0`. Rate limit: 500 requests per 5-minute rolling window.
+
+**System:**
+
+- `ping()` - Verify API connectivity (also used for health check)
+- `get_server_time()` - Get current server time
+
+**Donors:**
+
+- `search_donors(**kwargs)` - Search donors by field values (e.g. `last_name`, `email`, `zip`)
+- `get_donor(donor_id)` - Get a donor record by ID
+- `create_donor(**kwargs)` - Create a new donor record
+- `update_donor(donor_id, **kwargs)` - Update donor fields (PATCH)
+- `get_donor_flextable(donor_id, table_name)` - Get a named custom field table for a donor
+
+**Donations:**
+
+- `get_donation_summary(donor_id, **kwargs)` - Get totals/stats (optional `start_date`/`end_date`)
+- `list_donations(donor_id, **kwargs)` - List all donation transactions
+- `get_donation(donor_id, txn_id)` - Get a single transaction
+- `create_donation(donor_id, **kwargs)` - Record a new donation (e.g. `amount`, `fund_code`, `date`)
+- `add_donation_flag(donor_id, txn_id, **kwargs)` - Add a flag to a transaction
+- `get_related_transactions(donor_id, txn_id)` - List related transactions (e.g. matching gifts)
+- `get_related_transaction(donor_id, txn_id, rel_id)` - Get a single related transaction
+- `get_honoree_transactions(donor_id)` - List transactions where this donor is the honoree
+
+**Pledges:**
+
+- `list_pledges(donor_id, **kwargs)` - List all pledges
+- `get_pledge(donor_id, pledge_id)` - Get a single pledge
+- `create_pledge(donor_id, **kwargs)` - Create a pledge (e.g. `amount`, `frequency`, `start_date`)
+- `update_pledge(donor_id, pledge_id, **kwargs)` - Update pledge fields (PATCH)
+- `add_pledge_flag(donor_id, pledge_id, **kwargs)` - Add a flag to a pledge
+
+**Payment Tokens:**
+
+- `list_payment_tokens(donor_id)` - List stored payment tokens
+- `get_payment_token(donor_id, token_id)` - Get a single token
+- `create_payment_token(donor_id, **kwargs)` - Store a new payment token
+- `update_payment_token(donor_id, token_id, **kwargs)` - Update a token (PATCH)
+
+**Contact Info:**
+
+- `get_primary_address(donor_id)` - Get primary mailing address
+- `list_other_addresses(donor_id)` - List non-primary addresses
+- `list_emails(donor_id)` - List all email addresses
+- `list_phones(donor_id)` - List all phone numbers
+
+**Comments & Flags:**
+
+- `list_comments(donor_id)` - List all staff comments on a donor record
+- `add_comment(donor_id, **kwargs)` - Add a comment (e.g. `text`, `date`)
+- `get_comment(donor_id, comment_id)` - Get a single comment
+- `list_donor_flags(donor_id)` - List all flags on a donor record
+- `add_donor_flag(donor_id, **kwargs)` - Add a flag (e.g. `flag_code`)
+
+**Memberships:**
+
+- `list_memberships(donor_id)` - List all memberships
+- `get_membership(donor_id, membership_id)` - Get a single membership
+- `list_submemberships(donor_id)` - List sub-memberships
+- `get_mvault(donor_id)` - Get the MVault membership record
+
+**Orders:**
+
+- `list_orders(donor_id)` - List all orders
+- `get_order(donor_id, order_id)` - Get a single order
+- `create_order(donor_id, **kwargs)` - Create a new order
+
+**Code Tables:**
+
+- `get_codes(entity)` - Get valid code values for a resource type (e.g. `"donations"`, `"donors"`, `"pledges"`)
 
 ### ConfigManager
 
@@ -816,7 +943,7 @@ for conv in conversations:
 
 ## Testing
 
-The library has 598 unit tests covering all connectors and core modules.
+The library has 689 unit tests covering all connectors and core modules.
 
 ```bash
 # Run all tests
@@ -834,6 +961,7 @@ pytest tests/test_airtable.py -v
 pytest tests/test_bigquery.py -v
 pytest tests/test_openai.py -v
 pytest tests/test_sheets.py -v
+pytest tests/test_roi_crm.py -v
 
 # Run core and config tests
 pytest tests/test_core.py -v
