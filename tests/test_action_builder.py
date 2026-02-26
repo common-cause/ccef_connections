@@ -563,7 +563,7 @@ class TestTaggings:
     def test_list_taggings(self, mock_req, connected):
         mock_req.return_value = _make_response(
             200,
-            _page("action_builder:taggings", [{"id": TAGGING_ID}]),
+            _page("osdi:taggings", [{"id": TAGGING_ID}]),
         )
         result = connected.list_taggings(CAMPAIGN_ID, TAG_ID)
         assert len(result) == 1
@@ -572,7 +572,7 @@ class TestTaggings:
     @patch("ccef_connections.connectors.action_builder.requests.request")
     def test_list_taggings_url(self, mock_req, connected):
         mock_req.return_value = _make_response(
-            200, _page("action_builder:taggings", [])
+            200, _page("osdi:taggings", [])
         )
         connected.list_taggings(CAMPAIGN_ID, TAG_ID)
         call_url = mock_req.call_args.args[1]
@@ -582,7 +582,7 @@ class TestTaggings:
     def test_list_person_taggings(self, mock_req, connected):
         mock_req.return_value = _make_response(
             200,
-            _page("action_builder:taggings", [{"id": TAGGING_ID}]),
+            _page("osdi:taggings", [{"id": TAGGING_ID}]),
         )
         result = connected.list_person_taggings(CAMPAIGN_ID, PERSON_ID)
         assert len(result) == 1
@@ -590,7 +590,7 @@ class TestTaggings:
     @patch("ccef_connections.connectors.action_builder.requests.request")
     def test_list_person_taggings_url(self, mock_req, connected):
         mock_req.return_value = _make_response(
-            200, _page("action_builder:taggings", [])
+            200, _page("osdi:taggings", [])
         )
         connected.list_person_taggings(CAMPAIGN_ID, PERSON_ID)
         call_url = mock_req.call_args.args[1]

@@ -518,7 +518,7 @@ class ActionBuilderConnector(BaseConnection):
         """
         return self._paginate(
             f"/campaigns/{campaign_id}/tags/{tag_id}/taggings",
-            "action_builder:taggings",
+            "osdi:taggings",
         )
 
     @retry_action_builder_operation
@@ -537,7 +537,7 @@ class ActionBuilderConnector(BaseConnection):
         """
         return self._paginate(
             f"/campaigns/{campaign_id}/people/{person_id}/taggings",
-            "action_builder:taggings",
+            "osdi:taggings",
         )
 
     @retry_action_builder_operation
