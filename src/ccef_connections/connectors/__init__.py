@@ -7,6 +7,7 @@ from .bigquery import BigQueryConnector
 from .helpscout import HelpScoutConnector
 from .openai import OpenAIConnector
 from .ptv import PTVConnector
+from .roi_crm import ROICRMConnector
 from .sheets import SheetsConnector
 from .zoom import ZoomConnector
 
@@ -18,6 +19,7 @@ __all__ = [
     "HelpScoutConnector",
     "OpenAIConnector",
     "PTVConnector",
+    "ROICRMConnector",
     "SheetsConnector",
     "ZoomConnector",
 ]

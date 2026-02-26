@@ -244,6 +244,35 @@ def retry_ptv_operation(func: Callable) -> Callable:
     )(func)
 
 
+def retry_roi_crm_operation(func: Callable) -> Callable:
+    """
+    Decorator for ROI CRM API operations with retry logic.
+
+    ROI CRM allows 500 requests per 5-minute rolling window (429 on breach).
+    Only retries on RateLimitError — the only genuinely transient condition.
+    ConnectionError wraps HTTP 4xx/5xx responses and should fail immediately
+    so the caller sees the real error without waiting through exponential backoff.
+
+    Args:
+        func: The function to decorate
+
+    Returns:
+        Decorated function with ROI CRM-specific retry logic
+
+    Examples:
+        >>> @retry_roi_crm_operation
+        ... def get_donor(donor_id):
+        ...     return client.get(f"/donors/{donor_id}/")
+    """
+    return retry(
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=2.0, min=1.0, max=60.0),
+        retry=retry_if_exception_type(RateLimitError),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )(func)
+
+
 def retry_action_builder_operation(func: Callable) -> Callable:
     """
     Decorator for Action Builder API operations with retry logic.
