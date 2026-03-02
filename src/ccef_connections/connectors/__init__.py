@@ -9,6 +9,7 @@ from .openai import OpenAIConnector
 from .ptv import PTVConnector
 from .roi_crm import ROICRMConnector
 from .sheets import SheetsConnector
+from .sheets_writer import SheetsWriterConnector
 from .zoom import ZoomConnector
 
 __all__ = [
@@ -21,5 +22,6 @@ __all__ = [
     "PTVConnector",
     "ROICRMConnector",
     "SheetsConnector",
+    "SheetsWriterConnector",
     "ZoomConnector",
 ]

@@ -14,6 +14,8 @@ from .connectors.helpscout import HelpScoutConnector
 from .connectors.openai import OpenAIConnector
 from .connectors.ptv import PTVConnector
 from .connectors.sheets import SheetsConnector
+from .connectors.sheets_writer import SheetsWriterConnector
+from .connectors.roi_crm import ROICRMConnector
 from .connectors.zoom import ZoomConnector
 from .core.credentials import CredentialManager, get_credential
 from .exceptions import (
@@ -39,6 +41,8 @@ __all__ = [
     "OpenAIConnector",
     "PTVConnector",
     "SheetsConnector",
+    "SheetsWriterConnector",
+    "ROICRMConnector",
     "ZoomConnector",
     # Configuration
     "ConfigManager",

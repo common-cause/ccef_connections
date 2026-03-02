@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 ROI_TOKEN_URL = "https://roisolutions.us.auth0.com/oauth/token"
 ROI_API_BASE = "https://app.roicrm.net/api/1.0"
+ROI_AUDIENCE = "https://app.roicrm.net/api/1.0/"  # trailing slash required by Auth0
 
 
 class ROICRMConnector(BaseConnection):
@@ -51,6 +52,7 @@ class ROICRMConnector(BaseConnection):
         super().__init__()
         self._access_token: Optional[str] = None
         self._token_expires_at: float = 0.0
+        self._roi_client_code: Optional[str] = None
 
     def connect(self) -> None:
         """
@@ -63,6 +65,7 @@ class ROICRMConnector(BaseConnection):
         """
         try:
             creds = self._credential_manager.get_roi_crm_credentials()
+            self._roi_client_code = creds["roi_client_code"]
             self._fetch_token(creds)
             self._is_connected = True
             logger.info("Successfully connected to ROI CRM")
@@ -117,7 +120,7 @@ class ROICRMConnector(BaseConnection):
                     "grant_type": "client_credentials",
                     "client_id": creds["client_id"],
                     "client_secret": creds["client_secret"],
-                    "audience": creds["audience"],
+                    "audience": ROI_AUDIENCE,
                     "roi_client_code": creds["roi_client_code"],
                 },
                 timeout=30,
@@ -156,6 +159,7 @@ class ROICRMConnector(BaseConnection):
         return {
             "Authorization": f"Bearer {self._access_token}",
             "Content-Type": "application/json",
+            "roi-client-code": self._roi_client_code,
         }
 
     # ── HTTP helpers ──────────────────────────────────────────────────
@@ -284,34 +288,23 @@ class ROICRMConnector(BaseConnection):
 
     # ── System ────────────────────────────────────────────────────────
 
-    @retry_roi_crm_operation
-    def ping(self) -> Dict[str, Any]:
+    def ping(self) -> str:
         """
         Ping the ROI CRM API to verify connectivity.
 
         Returns:
-            Response dict from the ping endpoint
+            Plain text response from the ping endpoint (e.g. "pong!")
 
         Examples:
             >>> result = connector.ping()
         """
-        result = self._request("GET", "/ping/")
-        return result or {}
-
-    @retry_roi_crm_operation
-    def get_server_time(self) -> Dict[str, Any]:
-        """
-        Get the current server time from the ROI CRM API.
-
-        Returns:
-            Dict containing server time information
-
-        Examples:
-            >>> time_info = connector.get_server_time()
-            >>> print(time_info["server_time"])
-        """
-        result = self._request("GET", "/server-time/")
-        return result or {}
+        self._refresh_token_if_needed()
+        resp = requests.get(
+            f"{ROI_API_BASE}/ping/",
+            headers=self._get_headers(),
+            timeout=30,
+        )
+        return resp.text
 
     # ── Donors ────────────────────────────────────────────────────────
 

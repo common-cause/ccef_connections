@@ -424,18 +424,6 @@ class TestSystem:
         assert result["status"] == "ok"
         assert "/ping/" in mock_request.call_args[0][1]
 
-    @patch("ccef_connections.connectors.roi_crm.requests.request")
-    def test_get_server_time(self, mock_request, connected_connector):
-        mock_request.return_value = _make_response(
-            200, {"server_time": "2026-02-26T12:00:00Z"}
-        )
-
-        result = connected_connector.get_server_time()
-
-        assert result["server_time"] == "2026-02-26T12:00:00Z"
-        assert "/server-time/" in mock_request.call_args[0][1]
-
-
 # ── Donors ────────────────────────────────────────────────────────────
 
 
