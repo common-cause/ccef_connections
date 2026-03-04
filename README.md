@@ -1,6 +1,6 @@
 # CCEF Connections
 
-A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zoom, Action Network, Action Builder, Protect the Vote (PTV), and ROI CRM with Civis credential compatibility.
+A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zoom, Action Network, Action Builder, Protect the Vote (PTV), ROI CRM, and Geocodio with Civis credential compatibility.
 
 ## Features
 
@@ -14,6 +14,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 - **Action Builder**: Field organizing and relationship mapping — campaigns, people/entities, tags, taggings, and connections
 - **Protect the Vote (PTV)**: Election protection shift data — volunteer signups, registered volunteers, and shift availability across all states
 - **ROI CRM**: Fundraising CRM — donors, donations, pledges, memberships, payment tokens, orders, contact info, and code tables
+- **Geocodio**: Address geocoding — forward, reverse, and batch (up to 10,000 per request) for US, Canada, and Mexico
 - **Unified Credentials**: `{CREDENTIAL_NAME}_PASSWORD` pattern for Civis compatibility
 - **Automatic Retry**: Built-in exponential backoff for all APIs
 - **Configuration as Code**: Manage settings via Google Sheets
@@ -61,6 +62,7 @@ ACTION_NETWORK_API_KEY_PASSWORD=your-action-network-api-key
 ACTION_BUILDER_CREDENTIALS_PASSWORD={"api_token":"your-api-token","subdomain":"yourorg"}
 PTV_API_KEY_PASSWORD=your-ptv-api-key
 ROI_CRM_CREDENTIALS_PASSWORD={"client_id":"your-client-id","client_secret":"your-client-secret","audience":"https://app.roicrm.net/api/1.0","roi_client_code":"YOUR_ORG"}
+GEOCODIO_API_KEY_PASSWORD=your-geocodio-api-key
 ```
 
 ### Airtable Example
@@ -360,6 +362,48 @@ fund_codes = roi.get_codes("donations")
 # Context manager usage
 with ROICRMConnector() as roi:
     donors = roi.search_donors(zip="20001")
+```
+
+### Geocodio Example
+
+```python
+from ccef_connections import GeocodioConnector
+
+# Initialize connector
+geo = GeocodioConnector()
+
+# Single forward geocode (address → lat/lng)
+result = geo.geocode("1600 Pennsylvania Ave NW, Washington, DC")
+loc = result["results"][0]["location"]
+print(loc["lat"], loc["lng"])  # 38.897675 -77.036548
+
+# With field appends (congressional district, state legislature, census, etc.)
+result = geo.geocode("350 Fifth Ave, New York, NY", fields=["cd", "stateleg"])
+
+# Single reverse geocode (lat/lng → address)
+result = geo.reverse_geocode(38.897675, -77.036548)
+print(result["results"][0]["formatted_address"])
+
+# Batch forward geocode — list of addresses (up to 10,000 per request)
+results = geo.batch_geocode([
+    "1600 Pennsylvania Ave NW, Washington, DC",
+    "350 Fifth Ave, New York, NY",
+])
+for item in results["results"]:
+    print(item["query"], item["response"]["results"][0]["location"])
+
+# Batch with a dict — keys are preserved in the response for easy lookup
+results = geo.batch_geocode({
+    "whitehouse": "1600 Pennsylvania Ave NW, DC",
+    "empire_state": "350 Fifth Ave, NY",
+})
+
+# Batch reverse geocode
+results = geo.batch_reverse_geocode(["38.897675,-77.036548", "40.748441,-73.996277"])
+
+# Context manager
+with GeocodioConnector() as geo:
+    result = geo.geocode("1600 Pennsylvania Ave NW, DC")
 ```
 
 ### Configuration Management Example
@@ -753,6 +797,21 @@ Provides access to ROI CRM donor and fundraising data via OAuth2 Client Credenti
 **Code Tables:**
 
 - `get_codes(entity)` - Get valid code values for a resource type (e.g. `"donations"`, `"donors"`, `"pledges"`)
+
+### GeocodioConnector
+
+Provides forward and reverse geocoding via the Geocodio API v1.10. Supports single-address and batch operations (up to 10,000 per request). Coverage: US and Canada (forward + reverse), Mexico (forward only).
+
+**Credential:** `GEOCODIO_API_KEY_PASSWORD` (plain API key string)
+
+**Auth:** `api_key` query parameter on every request. Base URL: `https://api.geocod.io/v1.10`. Retries on 429 (quota exceeded) with exponential backoff.
+
+**Optional `fields` parameter:** Append enrichment data to any geocode result by passing a list of field names. Common values: `cd` (congressional district), `stateleg` (state legislature), `census`, `timezone`, `school`, `zip4`.
+
+- `geocode(address, fields=None, limit=1)` - Forward geocode a single address. Returns Geocodio response dict with `input` and `results` keys.
+- `reverse_geocode(lat, lng, fields=None, limit=1)` - Reverse geocode a single coordinate pair. Returns dict with `results` key.
+- `batch_geocode(addresses, fields=None, limit=1)` - Batch forward geocode up to 10,000 addresses. `addresses` may be a list of strings or a dict mapping custom keys to addresses. Returns Geocodio batch response dict.
+- `batch_reverse_geocode(coordinates, fields=None, limit=1)` - Batch reverse geocode up to 10,000 coordinate pairs. `coordinates` may be a list of `"lat,lng"` strings or a dict mapping custom keys to `"lat,lng"` strings.
 
 ### ConfigManager
 

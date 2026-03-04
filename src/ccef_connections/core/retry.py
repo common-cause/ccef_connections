@@ -301,3 +301,31 @@ def retry_action_builder_operation(func: Callable) -> Callable:
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )(func)
+
+
+def retry_geocodio_operation(func: Callable) -> Callable:
+    """
+    Decorator for Geocodio API operations with retry logic.
+
+    Geocodio returns 429 when the account's lookup quota is exceeded or
+    request rate is too high. Only retries on RateLimitError — 4xx/5xx
+    API errors should surface immediately.
+
+    Args:
+        func: The function to decorate
+
+    Returns:
+        Decorated function with Geocodio-specific retry logic
+
+    Examples:
+        >>> @retry_geocodio_operation
+        ... def geocode(address):
+        ...     return client.get("/geocode", params={"q": address})
+    """
+    return retry(
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=2.0, min=1.0, max=60.0),
+        retry=retry_if_exception_type(RateLimitError),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )(func)

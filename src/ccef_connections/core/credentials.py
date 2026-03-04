@@ -256,6 +256,18 @@ class CredentialManager:
             )
         return creds
 
+    def get_geocodio_key(self) -> str:
+        """
+        Get the Geocodio API key.
+
+        Returns:
+            The Geocodio API key
+
+        Raises:
+            CredentialError: If the credential is missing
+        """
+        return str(self.get_credential("GEOCODIO_API_KEY"))
+
     def get_roi_crm_credentials(self) -> Dict[str, Any]:
         """
         Get ROI CRM OAuth2 Client Credentials.
