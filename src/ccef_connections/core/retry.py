@@ -273,6 +273,14 @@ def retry_roi_crm_operation(func: Callable) -> Callable:
     )(func)
 
 
+def _wait_for_ab_rate_limit(retry_state) -> float:
+    """Wait the duration specified in the RateLimitError, plus a 2s buffer."""
+    exc = retry_state.outcome.exception()
+    if isinstance(exc, RateLimitError) and exc.retry_after:
+        return float(exc.retry_after) + 2.0
+    return 5.0
+
+
 def retry_action_builder_operation(func: Callable) -> Callable:
     """
     Decorator for Action Builder API operations with retry logic.
@@ -282,6 +290,10 @@ def retry_action_builder_operation(func: Callable) -> Callable:
     condition. ConnectionError wraps HTTP 4xx/5xx responses and should
     fail immediately so the caller sees the real error without waiting
     through exponential backoff.
+
+    Waits exactly as long as the API requests (Retry-After header) plus
+    a 2-second buffer, rather than using exponential backoff which would
+    exhaust all attempts before the rate limit window clears.
 
     Args:
         func: The function to decorate
@@ -296,7 +308,7 @@ def retry_action_builder_operation(func: Callable) -> Callable:
     """
     return retry(
         stop=stop_after_attempt(5),
-        wait=wait_exponential(multiplier=2.0, min=1.0, max=60.0),
+        wait=_wait_for_ab_rate_limit,
         retry=retry_if_exception_type(RateLimitError),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
