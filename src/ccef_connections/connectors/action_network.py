@@ -93,7 +93,7 @@ class ActionNetworkConnector(BaseConnection):
         """Return request headers with the API key."""
         return {
             "OSDI-API-Token": self._api_key or "",
-            "Content-Type": "application/hal+json",
+            "Content-Type": "application/json",
         }
 
     def _request(
