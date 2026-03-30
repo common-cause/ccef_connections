@@ -543,7 +543,7 @@ class ActionBuilderConnector(BaseConnection):
     @retry_action_builder_operation
     def delete_tagging(
         self, campaign_id: str, tag_id: str, tagging_id: str
-    ) -> None:
+    ) -> str:
         """
         Delete a tagging.
 
@@ -555,18 +555,22 @@ class ActionBuilderConnector(BaseConnection):
             campaign_id: Campaign UUID
             tag_id: Tag UUID
             tagging_id: Tagging UUID
+
+        Returns:
+            'ok' if the tagging was deleted, '404' if it was already absent.
         """
         try:
             self._request(
                 "DELETE",
                 f"/campaigns/{campaign_id}/tags/{tag_id}/taggings/{tagging_id}",
             )
+            return 'ok'
         except ConnectionError as e:
             if "404" in str(e):
                 logger.debug(
-                    f"delete_tagging: tagging {tagging_id} already absent (404) — skipping"
+                    f"delete_tagging: tagging {tagging_id} already absent (404)"
                 )
-                return
+                return '404'
             raise
 
     # -- Connections (read + update only) -------------------------------------
