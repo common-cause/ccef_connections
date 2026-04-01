@@ -748,6 +748,341 @@ class TestUpdateEntityWithTags:
 
 
 # ==========================================================================
+# append_note
+# ==========================================================================
+
+
+class TestAppendNote:
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_posts_to_people_endpoint(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, {"id": PERSON_ID})
+        connected.append_note(
+            CAMPAIGN_ID, ENTITY_INTERACT_ID,
+            section="Outreach", field="Contact Notes",
+            name="Called", note_body="Spoke about upcoming event",
+        )
+        call_url = mock_req.call_args.args[1]
+        assert call_url == f"{FAKE_BASE_URL}/campaigns/{CAMPAIGN_ID}/people"
+
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_sends_identifiers(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, {"id": PERSON_ID})
+        connected.append_note(
+            CAMPAIGN_ID, ENTITY_INTERACT_ID,
+            section="Outreach", field="Contact Notes",
+            name="Called", note_body="Spoke about upcoming event",
+        )
+        call_json = mock_req.call_args.kwargs["json"]
+        assert call_json["person"]["identifiers"] == [
+            f"action_builder:{ENTITY_INTERACT_ID}"
+        ]
+
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_sends_note_tag_with_all_fields(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, {"id": PERSON_ID})
+        connected.append_note(
+            CAMPAIGN_ID, ENTITY_INTERACT_ID,
+            section="Outreach", field="Contact Notes",
+            name="Called", note_body="Spoke about upcoming event",
+        )
+        call_json = mock_req.call_args.kwargs["json"]
+        tags = call_json["add_tags"]
+        assert len(tags) == 1
+        assert tags[0]["action_builder:section"] == "Outreach"
+        assert tags[0]["action_builder:field"] == "Contact Notes"
+        assert tags[0]["name"] == "Called"
+        assert tags[0]["action_builder:note_response"] == "Spoke about upcoming event"
+
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_returns_dict(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, {"id": PERSON_ID})
+        result = connected.append_note(
+            CAMPAIGN_ID, ENTITY_INTERACT_ID,
+            section="Outreach", field="Contact Notes",
+            name="Called", note_body="Spoke about upcoming event",
+        )
+        assert isinstance(result, dict)
+        assert result["id"] == PERSON_ID
+
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_returns_empty_dict_on_204(self, mock_req, connected):
+        mock_req.return_value = _make_response(204)
+        result = connected.append_note(
+            CAMPAIGN_ID, ENTITY_INTERACT_ID,
+            section="Outreach", field="Contact Notes",
+            name="Called", note_body="Spoke about upcoming event",
+        )
+        assert result == {}
+
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_no_remove_tags_in_body(self, mock_req, connected):
+        """remove_tags must never appear — it causes 500 from the AB API."""
+        mock_req.return_value = _make_response(200, {"id": PERSON_ID})
+        connected.append_note(
+            CAMPAIGN_ID, ENTITY_INTERACT_ID,
+            section="Outreach", field="Contact Notes",
+            name="Called", note_body="Spoke about upcoming event",
+        )
+        call_json = mock_req.call_args.kwargs["json"]
+        assert "remove_tags" not in call_json
+
+
+# ==========================================================================
+# create_connection
+# ==========================================================================
+
+CONNECTED_PERSON_ID = "connected-person-uuid-1"
+
+SAMPLE_CONNECTION_TAGS = [
+    {
+        "action_builder:section": "Connection Between People",
+        "action_builder:field": "Relation",
+        "name": "Friend",
+    }
+]
+
+
+class TestCreateConnection:
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_posts_to_connections_endpoint(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, {"id": CONNECTION_ID})
+        connected.create_connection(CAMPAIGN_ID, PERSON_ID, CONNECTED_PERSON_ID)
+        call_url = mock_req.call_args.args[1]
+        assert call_url == (
+            f"{FAKE_BASE_URL}/campaigns/{CAMPAIGN_ID}"
+            f"/people/{PERSON_ID}/connections"
+        )
+
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_uses_post_method(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, {"id": CONNECTION_ID})
+        connected.create_connection(CAMPAIGN_ID, PERSON_ID, CONNECTED_PERSON_ID)
+        assert mock_req.call_args.args[0] == "POST"
+
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_sends_connected_person_id(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, {"id": CONNECTION_ID})
+        connected.create_connection(CAMPAIGN_ID, PERSON_ID, CONNECTED_PERSON_ID)
+        call_json = mock_req.call_args.kwargs["json"]
+        assert call_json["connection"]["person_id"] == CONNECTED_PERSON_ID
+
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_with_tags(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, {"id": CONNECTION_ID})
+        connected.create_connection(
+            CAMPAIGN_ID, PERSON_ID, CONNECTED_PERSON_ID,
+            add_tags=SAMPLE_CONNECTION_TAGS,
+        )
+        call_json = mock_req.call_args.kwargs["json"]
+        assert call_json["add_tags"] == SAMPLE_CONNECTION_TAGS
+
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_without_tags_omits_add_tags(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, {"id": CONNECTION_ID})
+        connected.create_connection(CAMPAIGN_ID, PERSON_ID, CONNECTED_PERSON_ID)
+        call_json = mock_req.call_args.kwargs["json"]
+        assert "add_tags" not in call_json
+
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_empty_tags_list_omits_add_tags(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, {"id": CONNECTION_ID})
+        connected.create_connection(
+            CAMPAIGN_ID, PERSON_ID, CONNECTED_PERSON_ID, add_tags=[],
+        )
+        call_json = mock_req.call_args.kwargs["json"]
+        assert "add_tags" not in call_json
+
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_returns_dict(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, {"id": CONNECTION_ID})
+        result = connected.create_connection(
+            CAMPAIGN_ID, PERSON_ID, CONNECTED_PERSON_ID,
+        )
+        assert isinstance(result, dict)
+        assert result["id"] == CONNECTION_ID
+
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_returns_empty_dict_on_204(self, mock_req, connected):
+        mock_req.return_value = _make_response(204)
+        result = connected.create_connection(
+            CAMPAIGN_ID, PERSON_ID, CONNECTED_PERSON_ID,
+        )
+        assert result == {}
+
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_no_remove_tags_in_body(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, {"id": CONNECTION_ID})
+        connected.create_connection(
+            CAMPAIGN_ID, PERSON_ID, CONNECTED_PERSON_ID,
+            add_tags=SAMPLE_CONNECTION_TAGS,
+        )
+        call_json = mock_req.call_args.kwargs["json"]
+        assert "remove_tags" not in call_json
+
+
+# ==========================================================================
+# update_connection_with_tags
+# ==========================================================================
+
+
+class TestUpdateConnectionWithTags:
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_posts_to_connections_endpoint(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, {"id": CONNECTION_ID})
+        connected.update_connection_with_tags(
+            CAMPAIGN_ID, PERSON_ID, CONNECTED_PERSON_ID, SAMPLE_CONNECTION_TAGS,
+        )
+        call_url = mock_req.call_args.args[1]
+        assert call_url == (
+            f"{FAKE_BASE_URL}/campaigns/{CAMPAIGN_ID}"
+            f"/people/{PERSON_ID}/connections"
+        )
+
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_uses_post_method(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, {"id": CONNECTION_ID})
+        connected.update_connection_with_tags(
+            CAMPAIGN_ID, PERSON_ID, CONNECTED_PERSON_ID, SAMPLE_CONNECTION_TAGS,
+        )
+        assert mock_req.call_args.args[0] == "POST"
+
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_sends_connected_person_id(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, {"id": CONNECTION_ID})
+        connected.update_connection_with_tags(
+            CAMPAIGN_ID, PERSON_ID, CONNECTED_PERSON_ID, SAMPLE_CONNECTION_TAGS,
+        )
+        call_json = mock_req.call_args.kwargs["json"]
+        assert call_json["connection"]["person_id"] == CONNECTED_PERSON_ID
+
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_sends_add_tags(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, {"id": CONNECTION_ID})
+        connected.update_connection_with_tags(
+            CAMPAIGN_ID, PERSON_ID, CONNECTED_PERSON_ID, SAMPLE_CONNECTION_TAGS,
+        )
+        call_json = mock_req.call_args.kwargs["json"]
+        assert call_json["add_tags"] == SAMPLE_CONNECTION_TAGS
+
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_returns_dict(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, {"id": CONNECTION_ID})
+        result = connected.update_connection_with_tags(
+            CAMPAIGN_ID, PERSON_ID, CONNECTED_PERSON_ID, SAMPLE_CONNECTION_TAGS,
+        )
+        assert isinstance(result, dict)
+        assert result["id"] == CONNECTION_ID
+
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_returns_empty_dict_on_204(self, mock_req, connected):
+        mock_req.return_value = _make_response(204)
+        result = connected.update_connection_with_tags(
+            CAMPAIGN_ID, PERSON_ID, CONNECTED_PERSON_ID, SAMPLE_CONNECTION_TAGS,
+        )
+        assert result == {}
+
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_no_remove_tags_in_body(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, {"id": CONNECTION_ID})
+        connected.update_connection_with_tags(
+            CAMPAIGN_ID, PERSON_ID, CONNECTED_PERSON_ID, SAMPLE_CONNECTION_TAGS,
+        )
+        call_json = mock_req.call_args.kwargs["json"]
+        assert "remove_tags" not in call_json
+
+
+# ==========================================================================
+# append_connection_note
+# ==========================================================================
+
+
+class TestAppendConnectionNote:
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_posts_to_connections_endpoint(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, {"id": CONNECTION_ID})
+        connected.append_connection_note(
+            CAMPAIGN_ID, PERSON_ID, CONNECTED_PERSON_ID,
+            section="Outreach", field="Relationship Notes",
+            name="Follow-up", note_body="Discussed partnership",
+        )
+        call_url = mock_req.call_args.args[1]
+        assert call_url == (
+            f"{FAKE_BASE_URL}/campaigns/{CAMPAIGN_ID}"
+            f"/people/{PERSON_ID}/connections"
+        )
+
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_sends_connection_person_id(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, {"id": CONNECTION_ID})
+        connected.append_connection_note(
+            CAMPAIGN_ID, PERSON_ID, CONNECTED_PERSON_ID,
+            section="Outreach", field="Relationship Notes",
+            name="Follow-up", note_body="Discussed partnership",
+        )
+        call_json = mock_req.call_args.kwargs["json"]
+        assert call_json["connection"]["person_id"] == CONNECTED_PERSON_ID
+
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_sends_note_tag_with_all_fields(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, {"id": CONNECTION_ID})
+        connected.append_connection_note(
+            CAMPAIGN_ID, PERSON_ID, CONNECTED_PERSON_ID,
+            section="Outreach", field="Relationship Notes",
+            name="Follow-up", note_body="Discussed partnership",
+        )
+        call_json = mock_req.call_args.kwargs["json"]
+        tags = call_json["add_tags"]
+        assert len(tags) == 1
+        assert tags[0]["action_builder:section"] == "Outreach"
+        assert tags[0]["action_builder:field"] == "Relationship Notes"
+        assert tags[0]["name"] == "Follow-up"
+        assert tags[0]["action_builder:note_response"] == "Discussed partnership"
+
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_returns_dict(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, {"id": CONNECTION_ID})
+        result = connected.append_connection_note(
+            CAMPAIGN_ID, PERSON_ID, CONNECTED_PERSON_ID,
+            section="Outreach", field="Relationship Notes",
+            name="Follow-up", note_body="Discussed partnership",
+        )
+        assert isinstance(result, dict)
+        assert result["id"] == CONNECTION_ID
+
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_returns_empty_dict_on_204(self, mock_req, connected):
+        mock_req.return_value = _make_response(204)
+        result = connected.append_connection_note(
+            CAMPAIGN_ID, PERSON_ID, CONNECTED_PERSON_ID,
+            section="Outreach", field="Relationship Notes",
+            name="Follow-up", note_body="Discussed partnership",
+        )
+        assert result == {}
+
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_no_remove_tags_in_body(self, mock_req, connected):
+        """remove_tags must never appear — it causes 500 from the AB API."""
+        mock_req.return_value = _make_response(200, {"id": CONNECTION_ID})
+        connected.append_connection_note(
+            CAMPAIGN_ID, PERSON_ID, CONNECTED_PERSON_ID,
+            section="Outreach", field="Relationship Notes",
+            name="Follow-up", note_body="Discussed partnership",
+        )
+        call_json = mock_req.call_args.kwargs["json"]
+        assert "remove_tags" not in call_json
+
+    @patch("ccef_connections.connectors.action_builder.requests.request")
+    def test_uses_post_method(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, {"id": CONNECTION_ID})
+        connected.append_connection_note(
+            CAMPAIGN_ID, PERSON_ID, CONNECTED_PERSON_ID,
+            section="Outreach", field="Relationship Notes",
+            name="Follow-up", note_body="Discussed partnership",
+        )
+        assert mock_req.call_args.args[0] == "POST"
+
+
+# ==========================================================================
 # insert_entity
 # ==========================================================================
 

@@ -10,7 +10,7 @@ Pagination is page-based (page/per_page/total_pages) rather than
 cursor-based like Action Network.
 
 API limitations:
-- Connections can only be read or updated (no create via API)
+- Connections are created/updated via the Connection Helper (POST)
 - Taggings can only be read or deleted (no create/update via API)
 
 Tag update pattern (update_records workflow):
@@ -685,6 +685,179 @@ class ActionBuilderConnector(BaseConnection):
             "POST",
             f"/campaigns/{campaign_id}/people",
             json_body=body,
+        )
+        return result or {}
+
+    @retry_action_builder_operation
+    def append_note(
+        self,
+        campaign_id: str,
+        entity_interact_id: str,
+        section: str,
+        field: str,
+        name: str,
+        note_body: str,
+    ) -> Dict[str, Any]:
+        """
+        Append a note to an existing entity via the Person Signup Helper.
+
+        Notes are a special tag field_type in Action Builder. Each call
+        creates a new note entry — it does not overwrite existing notes on
+        the same field.
+
+        Args:
+            campaign_id: Campaign UUID (interact_id)
+            entity_interact_id: Entity interact_id UUID (36 chars)
+            section: The section the note field belongs to
+                (e.g. ``'Outreach'``)
+            field: The note field name
+                (e.g. ``'Contact Notes'``)
+            name: Short label / subject for the note
+            note_body: Full text of the note
+
+        Returns:
+            Response dict from the API
+        """
+        result = self._request(
+            "POST",
+            f"/campaigns/{campaign_id}/people",
+            json_body={
+                "person": {
+                    "identifiers": [f"action_builder:{entity_interact_id}"]
+                },
+                "add_tags": [
+                    {
+                        "action_builder:section": section,
+                        "action_builder:field": field,
+                        "name": name,
+                        "action_builder:note_response": note_body,
+                    }
+                ],
+            },
+        )
+        return result or {}
+
+    @retry_action_builder_operation
+    def create_connection(
+        self,
+        campaign_id: str,
+        person_id: str,
+        connected_person_id: str,
+        add_tags: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Create a connection between two entities via the Connection Helper.
+
+        If a connection already exists between the two entities it is updated
+        (tags are added); otherwise a new connection is created.
+
+        Args:
+            campaign_id: Campaign UUID
+            person_id: One side of the connection (entity UUID)
+            connected_person_id: Other side of the connection (entity UUID)
+            add_tags: Optional list of tag dicts, each with keys:
+                ``action_builder:section``, ``action_builder:field``, ``name``
+
+        Returns:
+            Response dict from the API (connection resource)
+        """
+        body: Dict[str, Any] = {
+            "connection": {
+                "person_id": connected_person_id,
+            },
+        }
+        if add_tags:
+            body["add_tags"] = add_tags
+        result = self._request(
+            "POST",
+            f"/campaigns/{campaign_id}/people/{person_id}/connections",
+            json_body=body,
+        )
+        return result or {}
+
+    @retry_action_builder_operation
+    def update_connection_with_tags(
+        self,
+        campaign_id: str,
+        person_id: str,
+        connected_person_id: str,
+        add_tags: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """
+        Update an existing connection's tags via the Connection Helper.
+
+        The connection is identified by the two entity IDs. Uses the same
+        endpoint as ``create_connection`` but communicates intent: the
+        connection is expected to exist already and we are adding tags to it.
+
+        Args:
+            campaign_id: Campaign UUID
+            person_id: One side of the connection (entity UUID)
+            connected_person_id: Other side of the connection (entity UUID)
+            add_tags: List of tag dicts, each with keys:
+                ``action_builder:section``, ``action_builder:field``, ``name``
+
+        Returns:
+            Response dict from the API (connection resource)
+        """
+        result = self._request(
+            "POST",
+            f"/campaigns/{campaign_id}/people/{person_id}/connections",
+            json_body={
+                "connection": {
+                    "person_id": connected_person_id,
+                },
+                "add_tags": add_tags,
+            },
+        )
+        return result or {}
+
+    @retry_action_builder_operation
+    def append_connection_note(
+        self,
+        campaign_id: str,
+        person_id: str,
+        connected_person_id: str,
+        section: str,
+        field: str,
+        name: str,
+        note_body: str,
+    ) -> Dict[str, Any]:
+        """
+        Append a note to a connection between two entities via the Connection Helper.
+
+        The connection is identified by the two entity IDs. If a connection
+        already exists between them it is updated; otherwise a new connection
+        is created with the note attached.
+
+        Args:
+            campaign_id: Campaign UUID
+            person_id: One side of the connection (entity UUID)
+            connected_person_id: Other side of the connection (entity UUID)
+            section: The section the note field belongs to
+            field: The note field name
+            name: Short label / subject for the note
+            note_body: Full text of the note
+
+        Returns:
+            Response dict from the API
+        """
+        result = self._request(
+            "POST",
+            f"/campaigns/{campaign_id}/people/{person_id}/connections",
+            json_body={
+                "connection": {
+                    "person_id": connected_person_id,
+                },
+                "add_tags": [
+                    {
+                        "action_builder:section": section,
+                        "action_builder:field": field,
+                        "name": name,
+                        "action_builder:note_response": note_body,
+                    }
+                ],
+            },
         )
         return result or {}
 
