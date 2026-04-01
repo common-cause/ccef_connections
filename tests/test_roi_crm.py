@@ -107,7 +107,7 @@ class TestConnect:
         assert body["grant_type"] == "client_credentials"
         assert body["client_id"] == "test-client-id"
         assert body["client_secret"] == "test-client-secret"
-        assert body["audience"] == "https://app.roicrm.net/api/1.0"
+        assert body["audience"] == "https://app.roicrm.net/api/1.0/"
         assert body["roi_client_code"] == "TEST_ORG"
 
     @patch("ccef_connections.connectors.roi_crm.requests.post")
@@ -415,14 +415,16 @@ class TestPagination:
 
 
 class TestSystem:
-    @patch("ccef_connections.connectors.roi_crm.requests.request")
-    def test_ping(self, mock_request, connected_connector):
-        mock_request.return_value = _make_response(200, {"status": "ok"})
+    @patch("ccef_connections.connectors.roi_crm.requests.get")
+    def test_ping(self, mock_get, connected_connector):
+        resp = MagicMock()
+        resp.text = "pong!"
+        mock_get.return_value = resp
 
         result = connected_connector.ping()
 
-        assert result["status"] == "ok"
-        assert "/ping/" in mock_request.call_args[0][1]
+        assert result == "pong!"
+        assert "/ping/" in mock_get.call_args[0][0]
 
 # ── Donors ────────────────────────────────────────────────────────────
 
@@ -434,43 +436,43 @@ class TestDonors:
             200,
             {
                 "items": [
-                    {"id": 1, "last_name": "Smith"},
-                    {"id": 2, "last_name": "Smith"},
+                    {"roi_family_id": 1, "name_last": "Smith"},
+                    {"roi_family_id": 2, "name_last": "Smith"},
                 ],
                 "next": None,
             },
         )
 
-        result = connected_connector.search_donors(last_name="Smith")
+        result = connected_connector.search_donors(name_last="Smith")
 
         assert len(result) == 2
         params = mock_request.call_args.kwargs["params"]
-        assert params["last_name"] == "Smith"
+        assert params["name_last"] == "Smith"
 
     @patch("ccef_connections.connectors.roi_crm.requests.request")
     def test_get_donor(self, mock_request, connected_connector):
         mock_request.return_value = _make_response(
-            200, {"id": 12345, "first_name": "Jane", "last_name": "Doe"}
+            200, {"roi_family_id": 12345, "name_first": "Jane", "name_last": "Doe"}
         )
 
         result = connected_connector.get_donor(12345)
 
-        assert result["id"] == 12345
+        assert result["roi_family_id"] == 12345
         assert "/donors/12345/" in mock_request.call_args[0][1]
 
     @patch("ccef_connections.connectors.roi_crm.requests.request")
     def test_create_donor(self, mock_request, connected_connector):
         mock_request.return_value = _make_response(
-            201, {"id": 99999, "first_name": "New", "last_name": "Donor"}
+            201, {"roi_family_id": 99999, "name_first": "New", "name_last": "Donor"}
         )
 
         result = connected_connector.create_donor(
-            first_name="New", last_name="Donor", email="new@example.com"
+            name_first="New", name_last="Donor", email="new@example.com"
         )
 
-        assert result["id"] == 99999
+        assert result["roi_family_id"] == 99999
         body = mock_request.call_args.kwargs["json"]
-        assert body["first_name"] == "New"
+        assert body["name_first"] == "New"
         assert body["email"] == "new@example.com"
 
     @patch("ccef_connections.connectors.roi_crm.requests.request")

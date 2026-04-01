@@ -314,15 +314,26 @@ class ROICRMConnector(BaseConnection):
         Search for donors using filter parameters.
 
         Args:
-            **kwargs: Filter parameters such as first_name, last_name,
-                email, phone, zip, etc.
+            **kwargs: Filter parameters such as name_last, name_first,
+                email, phone, zip, roi-id, etc.
 
         Returns:
-            List of donor dicts matching the search criteria
+            List of donor dicts matching the search criteria. Key fields in
+            each result item:
+              - roi_family_id: individual donor identifier (unique per member)
+              - roi_id: household identifier (shared by all household members)
+              - name_first, name_last, name_full: name fields
+              - address_line, household_address_line: formatted addresses
+              - account_status, do_not_contact, is_deceased: status flags
+              - family_member_type_code: "HEAD_OF_HOUSEHOLD" or "SECONDARY_CONTACT"
+            Note: ``search_donors(**{"roi-id": roi_id})`` returns all members
+            of a household (typically 1–2). For the head of household,
+            ``roi_family_id == roi_id``.
 
         Examples:
-            >>> donors = connector.search_donors(last_name="Smith", zip="20001")
+            >>> donors = connector.search_donors(name_last="Smith", zip="20001")
             >>> donors = connector.search_donors(email="donor@example.com")
+            >>> members = connector.search_donors(**{"roi-id": "12345"})
         """
         return self._paginate("/donors/", params=kwargs)
 
@@ -339,7 +350,7 @@ class ROICRMConnector(BaseConnection):
 
         Examples:
             >>> donor = connector.get_donor(12345)
-            >>> print(donor["first_name"], donor["last_name"])
+            >>> print(donor["name_first"], donor["name_last"])
         """
         result = self._request("GET", f"/donors/{donor_id}/")
         return result or {}
@@ -350,14 +361,14 @@ class ROICRMConnector(BaseConnection):
         Create a new donor record.
 
         Args:
-            **kwargs: Donor field values (first_name, last_name, email, etc.)
+            **kwargs: Donor field values (name_first, name_last, email, etc.)
 
         Returns:
             The newly created donor record dict
 
         Examples:
             >>> donor = connector.create_donor(
-            ...     first_name="Jane", last_name="Doe", email="jane@example.com"
+            ...     name_first="Jane", name_last="Doe", email="jane@example.com"
             ... )
         """
         result = self._request("POST", "/donors/", json_body=kwargs)
@@ -763,9 +774,17 @@ class ROICRMConnector(BaseConnection):
         Returns:
             Address dict with street, city, state, zip, etc.
 
+        Raises:
+            ConnectionError: On API errors, including 404 when the donor has
+                no address on file. Callers should catch ConnectionError and
+                treat a 404-originated exception as an empty result.
+
         Examples:
-            >>> address = connector.get_primary_address(12345)
-            >>> print(address["city"], address["state"])
+            >>> try:
+            ...     address = connector.get_primary_address(12345)
+            ... except ConnectionError:
+            ...     address = {}  # donor has no address on record
+            >>> print(address.get("city"), address.get("state"))
         """
         result = self._request("GET", f"/donors/{donor_id}/primary-address/")
         return result or {}
