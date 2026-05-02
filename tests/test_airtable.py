@@ -410,6 +410,95 @@ class TestBatchUpdate:
         connected_connector._api.table.assert_called_once_with("appXYZ", "BatchTable")
 
 
+# -- batch_upsert ------------------------------------------------------------
+
+
+class TestBatchUpsert:
+    def test_batch_upsert_success(self, connected_connector):
+        mock_table = MagicMock()
+        records = [
+            {"fields": {"Email": "a@b.com", "First Name": "Alice"}},
+            {"fields": {"Email": "c@d.com", "First Name": "Carol"}},
+        ]
+        returned = [
+            {"id": "rec1", "fields": records[0]["fields"]},
+            {"id": "rec2", "fields": records[1]["fields"]},
+        ]
+        mock_table.batch_upsert.return_value = returned
+        connected_connector._api.table.return_value = mock_table
+
+        result = connected_connector.batch_upsert(
+            "appABC123", "Volunteers", records, key_fields=["Email"]
+        )
+
+        assert result == returned
+        mock_table.batch_upsert.assert_called_once_with(
+            records, key_fields=["Email"], replace=False
+        )
+
+    def test_batch_upsert_empty_list_short_circuits(self, connected_connector):
+        """Empty record list returns an empty result dict without calling pyairtable."""
+        mock_table = MagicMock()
+        connected_connector._api.table.return_value = mock_table
+
+        result = connected_connector.batch_upsert(
+            "appABC123", "Volunteers", [], key_fields=["Email"]
+        )
+
+        assert result == {
+            "createdRecords": [],
+            "updatedRecords": [],
+            "records": [],
+        }
+        mock_table.batch_upsert.assert_not_called()
+
+    def test_batch_upsert_replace_true(self, connected_connector):
+        """replace=True is passed through to pyairtable."""
+        mock_table = MagicMock()
+        mock_table.batch_upsert.return_value = []
+        connected_connector._api.table.return_value = mock_table
+
+        records = [{"fields": {"Email": "a@b.com"}}]
+        connected_connector.batch_upsert(
+            "appABC123", "Volunteers", records, key_fields=["Email"], replace=True
+        )
+
+        mock_table.batch_upsert.assert_called_once_with(
+            records, key_fields=["Email"], replace=True
+        )
+
+    def test_batch_upsert_multiple_key_fields(self, connected_connector):
+        mock_table = MagicMock()
+        mock_table.batch_upsert.return_value = []
+        connected_connector._api.table.return_value = mock_table
+
+        records = [{"fields": {"State": "PA", "Email": "a@b.com"}}]
+        connected_connector.batch_upsert(
+            "appABC123",
+            "Volunteers",
+            records,
+            key_fields=["State", "Email"],
+        )
+
+        mock_table.batch_upsert.assert_called_once_with(
+            records, key_fields=["State", "Email"], replace=False
+        )
+
+    def test_batch_upsert_calls_get_table_correctly(self, connected_connector):
+        mock_table = MagicMock()
+        mock_table.batch_upsert.return_value = []
+        connected_connector._api.table.return_value = mock_table
+
+        connected_connector.batch_upsert(
+            "appXYZ", "TargetTable", [{"fields": {"Email": "x@y.com"}}],
+            key_fields=["Email"],
+        )
+
+        connected_connector._api.table.assert_called_once_with(
+            "appXYZ", "TargetTable"
+        )
+
+
 # -- create_record -----------------------------------------------------------
 
 
@@ -526,6 +615,9 @@ class TestRetryDecoratorIntegration:
 
     def test_batch_update_has_retry(self):
         assert hasattr(AirtableConnector.batch_update, "retry")
+
+    def test_batch_upsert_has_retry(self):
+        assert hasattr(AirtableConnector.batch_upsert, "retry")
 
     def test_create_record_has_retry(self):
         assert hasattr(AirtableConnector.create_record, "retry")

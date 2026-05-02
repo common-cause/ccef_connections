@@ -212,3 +212,54 @@ class AirtableConnector(BaseConnection):
         """
         table = self.get_table(base_id, table_name)
         return table.create(fields)
+
+    @retry_airtable_operation
+    def batch_upsert(
+        self,
+        base_id: str,
+        table_name: str,
+        records: List[Dict[str, Any]],
+        key_fields: List[str],
+        replace: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Upsert records by matching on one or more key fields.
+
+        Existing records (matched on ``key_fields``) are patched in place;
+        records with no match are created. Records in the table that are
+        not present in ``records`` are left untouched — this method does
+        not delete.
+
+        Args:
+            base_id: The Airtable base ID
+            table_name: The table name
+            records: List of records, each shaped as ``{"fields": {...}}``.
+                The fields dict must include every field listed in
+                ``key_fields``.
+            key_fields: Airtable field names used to match existing records.
+                Typically a single unique field like ``["Email"]``.
+            replace: When True, any fields not provided in ``fields`` are
+                cleared on existing records. Default False (patch semantics).
+
+        Returns:
+            Dict with keys ``createdRecords``, ``updatedRecords`` (lists of
+            record IDs) and ``records`` (full record objects). When the
+            input list is empty, returns an empty dict with the same keys.
+
+        Examples:
+            >>> connector = AirtableConnector()
+            >>> records = [
+            ...     {"fields": {"Email": "a@b.com", "First Name": "Alice"}},
+            ...     {"fields": {"Email": "c@d.com", "First Name": "Carol"}},
+            ... ]
+            >>> result = connector.batch_upsert(
+            ...     "appXXX", "Volunteers", records, key_fields=["Email"]
+            ... )
+            >>> len(result["createdRecords"]), len(result["updatedRecords"])
+        """
+        if not records:
+            return {"createdRecords": [], "updatedRecords": [], "records": []}
+        table = self.get_table(base_id, table_name)
+        return table.batch_upsert(
+            records, key_fields=key_fields, replace=replace
+        )
