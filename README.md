@@ -1,6 +1,6 @@
 # CCEF Connections
 
-A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zoom, Action Network, Action Builder, Protect the Vote (PTV), ROI CRM, and Geocodio with Civis credential compatibility.
+A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zoom, Action Network, Action Builder, Protect the Vote (PTV), ROI CRM, Geocodio, and GitHub with Civis credential compatibility.
 
 ## Features
 
@@ -15,6 +15,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 - **Protect the Vote (PTV)**: Election protection shift data — volunteer signups, registered volunteers, and shift availability across all states
 - **ROI CRM**: Fundraising CRM — donors, donations, pledges, memberships, payment tokens, orders, contact info, and code tables
 - **Geocodio**: Address geocoding — forward, reverse, and batch (up to 10,000 per request) for US, Canada, and Mexico
+- **GitHub**: File-write access to a repository via the REST contents API — idempotent commits suitable for "data sync -> JSON file -> GitHub Pages" patterns
 - **Unified Credentials**: `{CREDENTIAL_NAME}_PASSWORD` pattern for Civis compatibility
 - **Automatic Retry**: Built-in exponential backoff for all APIs
 - **Configuration as Code**: Manage settings via Google Sheets
@@ -63,7 +64,12 @@ ACTION_BUILDER_CREDENTIALS_PASSWORD={"api_token":"your-api-token","subdomain":"y
 PTV_API_KEY_PASSWORD=your-ptv-api-key
 ROI_CRM_CREDENTIALS_PASSWORD={"client_id":"your-client-id","client_secret":"your-client-secret","audience":"https://app.roicrm.net/api/1.0","roi_client_code":"YOUR_ORG"}
 GEOCODIO_API_KEY_PASSWORD=your-geocodio-api-key
+GITHUB_PAT_PASSWORD=ghp_XXXXXXXXXXXXXXXX
 ```
+
+For GitHub, use per-repo PATs by naming the credential after the project (e.g.
+`DYNAMIC_ACTION_MAP_GITHUB_PAT_PASSWORD`) and passing the matching `credential_name`
+to the `GitHubConnector` constructor. See the GitHub example below.
 
 ### Airtable Example
 
@@ -406,6 +412,51 @@ with GeocodioConnector() as geo:
     result = geo.geocode("1600 Pennsylvania Ave NW, DC")
 ```
 
+### GitHub Example
+
+```python
+from ccef_connections import GitHubConnector
+
+# Default credential — reads GITHUB_PAT_PASSWORD
+with GitHubConnector() as gh:
+    # Idempotent: only commits if the file's bytes actually differ from what's
+    # already in the repo. Returns the new commit SHA, or None on no-op.
+    commit_sha = gh.put_file_if_changed(
+        repo="common-cause/dynamic-action-map",
+        path="data/states.json",
+        content_bytes=b'{"key": "value"}\n',
+        message="Daily sync from Google Sheet",
+        branch="main",
+    )
+    if commit_sha:
+        print(f"Pushed {commit_sha[:7]}")
+
+# Per-repo PAT — recommended pattern. Reads DYNAMIC_ACTION_MAP_GITHUB_PAT_PASSWORD.
+# Each script holds a scope-minimized token, so a leak only affects one repo.
+with GitHubConnector(credential_name="DYNAMIC_ACTION_MAP_GITHUB_PAT") as gh:
+    gh.put_file_if_changed(...)
+
+# Lower-level helpers if you need them
+with GitHubConnector() as gh:
+    existing = gh.get_file("owner/repo", "path/to/file.json")
+    if existing is None:
+        print("File does not exist")
+    else:
+        print(f"Current sha: {existing['sha']}")
+
+    # Explicit create or update — caller manages the SHA
+    sha = gh.put_file(
+        "owner/repo", "path/to/file.json",
+        content_bytes=b"...",
+        message="...",
+        sha=existing["sha"] if existing else None,
+    )
+```
+
+**Token setup:** Use a fine-grained PAT with `Contents: Read & Write` on the target
+repo (and nothing else). Pin its expiration date to your calendar — fine-grained
+PATs max out at 1 year and will silently break the sync when they expire.
+
 ### Configuration Management Example
 
 ```python
@@ -490,6 +541,8 @@ All credentials follow the `{CREDENTIAL_NAME}_PASSWORD` naming convention:
 - `ACTION_BUILDER_CREDENTIALS_PASSWORD` — JSON with `api_token` and `subdomain`
 - `PTV_API_KEY_PASSWORD` — API key string
 - `ROI_CRM_CREDENTIALS_PASSWORD` — JSON with `client_id`, `client_secret`, `audience`, and `roi_client_code`
+- `GEOCODIO_API_KEY_PASSWORD` — API key string
+- `GITHUB_PAT_PASSWORD` — Personal Access Token string (default name). Override with `GitHubConnector(credential_name="...")` to use per-repo tokens like `DYNAMIC_ACTION_MAP_GITHUB_PAT_PASSWORD`.
 
 This pattern is compatible with Civis Docker environments while also working seamlessly in local development with `.env` files.
 
@@ -506,6 +559,7 @@ All connectors include automatic retry with exponential backoff:
 - **Action Builder**: 5 retries, handles 429 rate limits (4 req/s)
 - **PTV**: 5 retries, handles transient connection errors and rate limits
 - **ROI CRM**: 5 retries on 429 rate limit only (500 req per 5-min window); other HTTP errors surface immediately
+- **GitHub**: 5 retries on 429 / 403 secondary rate limits, honoring the exact `Retry-After` (or `x-ratelimit-reset`) duration the API specifies plus a 2s buffer. Other HTTP errors surface immediately.
 - **Transient errors**: Automatic retry for network failures
 
 ### Auto-Connect Behavior
@@ -813,6 +867,24 @@ Provides forward and reverse geocoding via the Geocodio API v1.10. Supports sing
 - `batch_geocode(addresses, fields=None, limit=1)` - Batch forward geocode up to 10,000 addresses. `addresses` may be a list of strings or a dict mapping custom keys to addresses. Returns Geocodio batch response dict.
 - `batch_reverse_geocode(coordinates, fields=None, limit=1)` - Batch reverse geocode up to 10,000 coordinate pairs. `coordinates` may be a list of `"lat,lng"` strings or a dict mapping custom keys to `"lat,lng"` strings.
 
+### GitHubConnector
+
+Provides file-write access to a GitHub repository via the REST contents API. Designed
+for "data sync -> JSON file -> GitHub Pages" patterns where a scheduled job commits a
+single file to a repo on every tick.
+
+**Credential:** `GITHUB_PAT_PASSWORD` by default — a Personal Access Token string. Pass
+`credential_name="..."` to the constructor to read a different credential (recommended:
+one PAT per repo, e.g. `DYNAMIC_ACTION_MAP_GITHUB_PAT`).
+
+**Auth:** Bearer-token PAT on every request. Base URL: `https://api.github.com`.
+Rate limit: 5000 requests/hour for authenticated PATs; the connector also honors
+GitHub's secondary rate limits (403 with `x-ratelimit-remaining: 0`).
+
+- `get_file(repo, path, ref="main")` - Fetch a file. Returns `{"content_bytes": bytes, "sha": str}` or `None` if the file doesn't exist on `ref`. Raises `WriteError` if `path` is a directory.
+- `put_file(repo, path, content_bytes, message, branch="main", sha=None)` - Create or update a file. For updates, pass the file's current SHA via `sha`. Returns the new commit SHA. Raises `WriteError` on SHA conflicts (409) or validation failures (422).
+- `put_file_if_changed(repo, path, content_bytes, message, branch="main")` - The headline call site for idempotent sync jobs. Fetches the file, compares bytes, and only PUTs if there's a real change. Returns the new commit SHA, or `None` if the repo already had identical content. Safe to call on every scheduled run; no-op days produce no commits.
+
 ### ConfigManager
 
 - `get_config()` - Get all configuration
@@ -1002,7 +1074,7 @@ for conv in conversations:
 
 ## Testing
 
-The library has 689 unit tests covering all connectors and core modules.
+The library has 838 unit tests covering all connectors and core modules.
 
 ```bash
 # Run all tests
@@ -1021,6 +1093,7 @@ pytest tests/test_bigquery.py -v
 pytest tests/test_openai.py -v
 pytest tests/test_sheets.py -v
 pytest tests/test_roi_crm.py -v
+pytest tests/test_github.py -v
 
 # Run core and config tests
 pytest tests/test_core.py -v
