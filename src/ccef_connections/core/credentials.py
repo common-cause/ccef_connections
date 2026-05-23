@@ -268,6 +268,25 @@ class CredentialManager:
         """
         return str(self.get_credential("GEOCODIO_API_KEY"))
 
+    def get_github_pat(self, credential_name: str = "GITHUB_PAT") -> str:
+        """
+        Get a GitHub Personal Access Token.
+
+        Args:
+            credential_name: Name of the credential (default: "GITHUB_PAT").
+                The env var read is {credential_name}_PASSWORD. Use a
+                project-specific name when running multiple GitHub-writing
+                scripts in the same environment so each holds a scope-
+                minimized token (e.g. "DYNAMIC_ACTION_MAP_GITHUB_PAT").
+
+        Returns:
+            The PAT as a string
+
+        Raises:
+            CredentialError: If the credential is missing
+        """
+        return str(self.get_credential(credential_name))
+
     def get_roi_crm_credentials(self) -> Dict[str, Any]:
         """
         Get ROI CRM OAuth2 Client Credentials.

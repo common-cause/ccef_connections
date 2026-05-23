@@ -5,6 +5,7 @@ from .action_network import ActionNetworkConnector
 from .airtable import AirtableConnector
 from .bigquery import BigQueryConnector
 from .geocodio import GeocodioConnector
+from .github import GitHubConnector
 from .helpscout import HelpScoutConnector
 from .openai import OpenAIConnector
 from .ptv import PTVConnector
@@ -19,6 +20,7 @@ __all__ = [
     "AirtableConnector",
     "BigQueryConnector",
     "GeocodioConnector",
+    "GitHubConnector",
     "HelpScoutConnector",
     "OpenAIConnector",
     "PTVConnector",

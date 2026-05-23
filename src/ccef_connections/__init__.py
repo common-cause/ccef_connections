@@ -10,6 +10,7 @@ from .connectors.action_builder import ActionBuilderConnector
 from .connectors.action_network import ActionNetworkConnector
 from .connectors.airtable import AirtableConnector
 from .connectors.bigquery import BigQueryConnector
+from .connectors.github import GitHubConnector
 from .connectors.helpscout import HelpScoutConnector
 from .connectors.openai import OpenAIConnector
 from .connectors.ptv import PTVConnector
@@ -37,6 +38,7 @@ __all__ = [
     "ActionNetworkConnector",
     "AirtableConnector",
     "BigQueryConnector",
+    "GitHubConnector",
     "HelpScoutConnector",
     "OpenAIConnector",
     "PTVConnector",

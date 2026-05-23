@@ -315,6 +315,47 @@ def retry_action_builder_operation(func: Callable) -> Callable:
     )(func)
 
 
+def _wait_for_github_rate_limit(retry_state) -> float:
+    """Wait the duration the GitHub API requested, plus a 2s buffer."""
+    exc = retry_state.outcome.exception()
+    if isinstance(exc, RateLimitError) and exc.retry_after:
+        return float(exc.retry_after) + 2.0
+    return 5.0
+
+
+def retry_github_operation(func: Callable) -> Callable:
+    """
+    Decorator for GitHub API operations with retry logic.
+
+    GitHub returns 429 (or 403 with x-ratelimit-remaining: 0) when rate
+    limited, with a Retry-After or x-ratelimit-reset header indicating
+    when to retry. The connector translates both into RateLimitError with
+    retry_after populated; this decorator honors that exact wait time plus
+    a 2s buffer, rather than guessing via exponential backoff.
+
+    Only retries on RateLimitError — 4xx/5xx surface immediately so the
+    caller sees the real error without waiting through five attempts.
+
+    Args:
+        func: The function to decorate
+
+    Returns:
+        Decorated function with GitHub-specific retry logic
+
+    Examples:
+        >>> @retry_github_operation
+        ... def put_file(repo, path, content):
+        ...     return connector._request("PUT", f"/repos/{repo}/contents/{path}", ...)
+    """
+    return retry(
+        stop=stop_after_attempt(5),
+        wait=_wait_for_github_rate_limit,
+        retry=retry_if_exception_type(RateLimitError),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )(func)
+
+
 def retry_geocodio_operation(func: Callable) -> Callable:
     """
     Decorator for Geocodio API operations with retry logic.
