@@ -1,31 +1,64 @@
-"""Connectors for various services."""
+"""Connectors for various services.
 
-from .action_builder import ActionBuilderConnector
-from .action_network import ActionNetworkConnector
-from .airtable import AirtableConnector
-from .bigquery import BigQueryConnector
-from .geocodio import GeocodioConnector
-from .github import GitHubConnector
-from .helpscout import HelpScoutConnector
-from .openai import OpenAIConnector
-from .ptv import PTVConnector
-from .roi_crm import ROICRMConnector
-from .sheets import SheetsConnector
-from .sheets_writer import SheetsWriterConnector
-from .zoom import ZoomConnector
+Connectors are imported lazily (PEP 562) so that importing this package does
+not require the third-party dependencies of every connector. Connectors whose
+dependencies live behind an extra raise an ImportError with the matching
+``pip install`` hint if that extra is not installed.
+"""
 
-__all__ = [
-    "ActionBuilderConnector",
-    "ActionNetworkConnector",
-    "AirtableConnector",
-    "BigQueryConnector",
-    "GeocodioConnector",
-    "GitHubConnector",
-    "HelpScoutConnector",
-    "OpenAIConnector",
-    "PTVConnector",
-    "ROICRMConnector",
-    "SheetsConnector",
-    "SheetsWriterConnector",
-    "ZoomConnector",
-]
+import importlib
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .action_builder import ActionBuilderConnector
+    from .action_network import ActionNetworkConnector
+    from .airtable import AirtableConnector
+    from .bigquery import BigQueryConnector
+    from .geocodio import GeocodioConnector
+    from .github import GitHubConnector
+    from .helpscout import HelpScoutConnector
+    from .openai import OpenAIConnector
+    from .ptv import PTVConnector
+    from .roi_crm import ROICRMConnector
+    from .sheets import SheetsConnector
+    from .sheets_writer import SheetsWriterConnector
+    from .zoom import ZoomConnector
+
+# Lazy attribute -> (submodule, required extra or None).
+_LAZY_IMPORTS = {
+    "ActionBuilderConnector": ("action_builder", None),
+    "ActionNetworkConnector": ("action_network", None),
+    "AirtableConnector": ("airtable", "airtable"),
+    "BigQueryConnector": ("bigquery", "bigquery"),
+    "GeocodioConnector": ("geocodio", None),
+    "GitHubConnector": ("github", None),
+    "HelpScoutConnector": ("helpscout", None),
+    "OpenAIConnector": ("openai", "openai"),
+    "PTVConnector": ("ptv", None),
+    "ROICRMConnector": ("roi_crm", None),
+    "SheetsConnector": ("sheets", "sheets"),
+    "SheetsWriterConnector": ("sheets_writer", "sheets"),
+    "ZoomConnector": ("zoom", None),
+}
+
+__all__ = list(_LAZY_IMPORTS)
+
+
+def __getattr__(name: str):
+    if name in _LAZY_IMPORTS:
+        submodule, extra = _LAZY_IMPORTS[name]
+        try:
+            module = importlib.import_module(f".{submodule}", __name__)
+        except ImportError as e:
+            if extra is not None:
+                raise ImportError(
+                    f"{name} requires optional dependencies that are not installed. "
+                    f'Install with: pip install "ccef-connections[{extra}]"'
+                ) from e
+            raise
+        return getattr(module, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(__all__)

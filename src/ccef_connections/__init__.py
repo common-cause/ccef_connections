@@ -3,21 +3,16 @@ CCEF Connections - Reusable connection library for CCEF data integrations.
 
 This library provides unified connection management for Airtable, OpenAI,
 Google Sheets, and BigQuery with Civis credential compatibility.
+
+Connectors are imported lazily (PEP 562): importing this package only loads
+the lightweight core. Connectors whose third-party dependencies live behind
+an extra raise an ImportError with the matching ``pip install`` hint if that
+extra is not installed.
 """
 
-from .config import ConfigManager
-from .connectors.action_builder import ActionBuilderConnector
-from .connectors.action_network import ActionNetworkConnector
-from .connectors.airtable import AirtableConnector
-from .connectors.bigquery import BigQueryConnector
-from .connectors.github import GitHubConnector
-from .connectors.helpscout import HelpScoutConnector
-from .connectors.openai import OpenAIConnector
-from .connectors.ptv import PTVConnector
-from .connectors.sheets import SheetsConnector
-from .connectors.sheets_writer import SheetsWriterConnector
-from .connectors.roi_crm import ROICRMConnector
-from .connectors.zoom import ZoomConnector
+import importlib
+from typing import TYPE_CHECKING
+
 from .core.credentials import CredentialManager, get_credential
 from .exceptions import (
     CCEFConnectionError,
@@ -30,7 +25,43 @@ from .exceptions import (
     WriteError,
 )
 
-__version__ = "0.1.0"
+if TYPE_CHECKING:
+    from .config import ConfigManager
+    from .connectors.action_builder import ActionBuilderConnector
+    from .connectors.action_network import ActionNetworkConnector
+    from .connectors.airtable import AirtableConnector
+    from .connectors.bigquery import BigQueryConnector
+    from .connectors.geocodio import GeocodioConnector
+    from .connectors.github import GitHubConnector
+    from .connectors.helpscout import HelpScoutConnector
+    from .connectors.openai import OpenAIConnector
+    from .connectors.ptv import PTVConnector
+    from .connectors.roi_crm import ROICRMConnector
+    from .connectors.sheets import SheetsConnector
+    from .connectors.sheets_writer import SheetsWriterConnector
+    from .connectors.zoom import ZoomConnector
+
+__version__ = "0.2.0"
+
+# Lazy attribute -> (module, required extra or None).
+# Connectors with extra=None need only the base install (requests).
+_LAZY_IMPORTS = {
+    "ActionBuilderConnector": ("ccef_connections.connectors.action_builder", None),
+    "ActionNetworkConnector": ("ccef_connections.connectors.action_network", None),
+    "AirtableConnector": ("ccef_connections.connectors.airtable", "airtable"),
+    "BigQueryConnector": ("ccef_connections.connectors.bigquery", "bigquery"),
+    "GeocodioConnector": ("ccef_connections.connectors.geocodio", None),
+    "GitHubConnector": ("ccef_connections.connectors.github", None),
+    "HelpScoutConnector": ("ccef_connections.connectors.helpscout", None),
+    "OpenAIConnector": ("ccef_connections.connectors.openai", "openai"),
+    "PTVConnector": ("ccef_connections.connectors.ptv", None),
+    "ROICRMConnector": ("ccef_connections.connectors.roi_crm", None),
+    "SheetsConnector": ("ccef_connections.connectors.sheets", "sheets"),
+    "SheetsWriterConnector": ("ccef_connections.connectors.sheets_writer", "sheets"),
+    "ZoomConnector": ("ccef_connections.connectors.zoom", None),
+    # ConfigManager reads config from Google Sheets, so it needs the sheets extra
+    "ConfigManager": ("ccef_connections.config", "sheets"),
+}
 
 __all__ = [
     # Main connectors
@@ -38,13 +69,14 @@ __all__ = [
     "ActionNetworkConnector",
     "AirtableConnector",
     "BigQueryConnector",
+    "GeocodioConnector",
     "GitHubConnector",
     "HelpScoutConnector",
     "OpenAIConnector",
     "PTVConnector",
+    "ROICRMConnector",
     "SheetsConnector",
     "SheetsWriterConnector",
-    "ROICRMConnector",
     "ZoomConnector",
     # Configuration
     "ConfigManager",
@@ -61,3 +93,23 @@ __all__ = [
     "QueryError",
     "WriteError",
 ]
+
+
+def __getattr__(name: str):
+    if name in _LAZY_IMPORTS:
+        module_path, extra = _LAZY_IMPORTS[name]
+        try:
+            module = importlib.import_module(module_path)
+        except ImportError as e:
+            if extra is not None:
+                raise ImportError(
+                    f"{name} requires optional dependencies that are not installed. "
+                    f'Install with: pip install "ccef-connections[{extra}]"'
+                ) from e
+            raise
+        return getattr(module, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(__all__)

@@ -4,39 +4,49 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ccef-connections"
-version = "0.1.0"
+version = "0.2.0"
 description = "Reusable connection library for CCEF data integrations"
 authors = [{name = "Common Cause Education Fund"}]
 license = {text = "MIT"}
 requires-python = ">=3.9"
 readme = "README.md"
+# Base install covers core (credentials, retry, exceptions) and all REST
+# connectors: Action Builder, Action Network, Geocodio, GitHub, HelpScout,
+# PTV, ROI CRM, Zoom. Heavier connectors live behind extras below.
 dependencies = [
-    # Existing dependencies
-    "pyairtable>=2.0.0",
-    "langchain>=0.1.0",
-    "langchain-openai>=0.0.5",
-    "pydantic>=2.0.0",
-    "python-dotenv>=1.0.0",
-    # New for Google Sheets
-    "gspread>=5.12.0",
-    "google-api-python-client>=2.100.0",
-    "google-auth>=2.25.0",
-    "google-auth-oauthlib>=1.2.0",
-    # New for BigQuery
-    "google-cloud-bigquery>=3.13.0",
-    "pandas-gbq>=0.19.0",
-    "db-dtypes>=1.1.0",
-    # Retry logic
-    "tenacity>=8.2.0",
-    # HelpScout HTTP client
     "requests>=2.31.0",
+    "tenacity>=8.2.0",
+    "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]
+airtable = [
+    "pyairtable>=2.0.0",
+]
+sheets = [
+    # Also required by ConfigManager (reads config from Google Sheets)
+    "gspread>=5.12.0",
+    "google-api-python-client>=2.100.0",
+    "google-auth>=2.25.0",
+]
+bigquery = [
+    "google-cloud-bigquery>=3.13.0",
+    "google-auth>=2.25.0",
+    "db-dtypes>=1.1.0",
+]
+openai = [
+    "langchain>=0.1.0",
+    "langchain-openai>=0.0.5",
+    "pydantic>=2.0.0",
+]
 pandas = [
     "pandas>=2.0.0",
 ]
+all = [
+    "ccef-connections[airtable,sheets,bigquery,openai,pandas]",
+]
 dev = [
+    "ccef-connections[all]",
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
     "pytest-mock>=3.12.0",

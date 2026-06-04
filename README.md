@@ -22,27 +22,46 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 
 ## Installation
 
+Dependencies are split by connector. The base install is lightweight
+(`requests`, `tenacity`, `python-dotenv`) and covers core plus all REST
+connectors: Action Builder, Action Network, Geocodio, GitHub, HelpScout,
+PTV, ROI CRM, and Zoom. Heavier connectors are opt-in via extras:
+
+| Extra | Enables | Pulls in |
+|---|---|---|
+| `airtable` | AirtableConnector | pyairtable |
+| `sheets` | SheetsConnector, SheetsWriterConnector, ConfigManager | gspread, google-api-python-client, google-auth |
+| `bigquery` | BigQueryConnector | google-cloud-bigquery, db-dtypes |
+| `openai` | OpenAIConnector | langchain, langchain-openai, pydantic |
+| `pandas` | DataFrame methods on BigQueryConnector | pandas |
+| `all` | everything above | |
+
+Connectors are imported lazily — importing the package never loads
+dependencies you haven't installed. If you import a connector whose extra is
+missing, you get an `ImportError` with the exact `pip install` command to fix it.
+
+### From Another Project
+
+```bash
+# Base install (REST connectors only) — editable from local path:
+pip install -e ../ccef-connections
+# With specific extras (quote the path+extras together):
+pip install -e "../ccef-connections[bigquery,sheets]"
+# Example — full OneDrive path:
+pip install -e "C:/Users/RobKerth/OneDrive - Common Cause Education Fund/Documents/AI Interpretation/ccef-connections[bigquery,sheets]"
+
+# Or after publishing to PyPI
+pip install "ccef-connections[bigquery,sheets]"
+```
+
 ### Development Installation
 
 ```bash
 # Clone or navigate to the repository
 cd ccef-connections
 
-# Install in editable mode with optional dependencies
-pip install -e ".[dev,pandas]"
-```
-
-### From Another Project
-
-```bash
-# Install as editable from local path (adjust path to wherever the repo lives)
-# Example — sibling directory:
-pip install -e ../ccef-connections
-# Example — full OneDrive path:
-pip install -e "C:/Users/RobKerth/OneDrive - Common Cause Education Fund/Documents/AI Interpretation/ccef-connections"
-
-# Or after publishing to PyPI
-pip install ccef-connections
+# Install in editable mode with all extras plus dev tools
+pip install -e ".[dev]"
 ```
 
 ## Quick Start
