@@ -143,7 +143,9 @@ class TestRequest:
             f"{ACTION_NETWORK_API_BASE}/people",
             headers={
                 "OSDI-API-Token": FAKE_API_KEY,
-                "Content-Type": "application/hal+json",
+                # application/json, not hal+json — Cloudflare blocks hal+json
+                # PUTs (see 5ad7e1d)
+                "Content-Type": "application/json",
             },
             params=None,
             json=None,
