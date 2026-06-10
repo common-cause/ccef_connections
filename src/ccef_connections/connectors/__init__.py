@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from .action_network import ActionNetworkConnector
     from .airtable import AirtableConnector
     from .bigquery import BigQueryConnector
+    from .email_connector import EmailConnector
     from .geocodio import GeocodioConnector
     from .github import GitHubConnector
     from .helpscout import HelpScoutConnector
@@ -30,6 +31,7 @@ _LAZY_IMPORTS = {
     "ActionNetworkConnector": ("action_network", None),
     "AirtableConnector": ("airtable", "airtable"),
     "BigQueryConnector": ("bigquery", "bigquery"),
+    "EmailConnector": ("email_connector", None),
     "GeocodioConnector": ("geocodio", None),
     "GitHubConnector": ("github", None),
     "HelpScoutConnector": ("helpscout", None),

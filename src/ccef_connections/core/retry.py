@@ -356,6 +356,35 @@ def retry_github_operation(func: Callable) -> Callable:
     )(func)
 
 
+def retry_email_operation(func: Callable) -> Callable:
+    """
+    Decorator for transactional-email (Resend) operations with retry logic.
+
+    Resend returns 429 when the per-second/daily send rate is exceeded. Only
+    retries on RateLimitError — 4xx/5xx surface immediately so the caller sees
+    the real error (a bad from-domain or malformed payload won't fix itself by
+    retrying).
+
+    Args:
+        func: The function to decorate
+
+    Returns:
+        Decorated function with Resend-specific retry logic
+
+    Examples:
+        >>> @retry_email_operation
+        ... def send(to, subject, html):
+        ...     return connector._request("POST", "/emails", ...)
+    """
+    return retry(
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=2.0, min=1.0, max=60.0),
+        retry=retry_if_exception_type(RateLimitError),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )(func)
+
+
 def retry_geocodio_operation(func: Callable) -> Callable:
     """
     Decorator for Geocodio API operations with retry logic.

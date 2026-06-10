@@ -268,6 +268,18 @@ class CredentialManager:
         """
         return str(self.get_credential("GEOCODIO_API_KEY"))
 
+    def get_resend_api_key(self) -> str:
+        """
+        Get the Resend transactional-email API key.
+
+        Returns:
+            The Resend API key
+
+        Raises:
+            CredentialError: If the credential is missing
+        """
+        return str(self.get_credential("RESEND_API_KEY"))
+
     def get_github_pat(self, credential_name: str = "GITHUB_PAT") -> str:
         """
         Get a GitHub Personal Access Token.
