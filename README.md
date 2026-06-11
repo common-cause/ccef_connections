@@ -1,6 +1,6 @@
 # CCEF Connections
 
-A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zoom, Action Network, Action Builder, Protect the Vote (PTV), ROI CRM, Geocodio, and GitHub with Civis credential compatibility.
+A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zoom, Action Network, Action Builder, Protect the Vote (PTV), ROI CRM, Geocodio, GitHub, and Resend (transactional email) with Civis credential compatibility.
 
 ## Features
 
@@ -16,6 +16,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 - **ROI CRM**: Fundraising CRM — donors, donations, pledges, memberships, payment tokens, orders, contact info, and code tables
 - **Geocodio**: Address geocoding — forward, reverse, and batch (up to 10,000 per request) for US, Canada, and Mexico
 - **GitHub**: File-write access to a repository via the REST contents API — idempotent commits suitable for "data sync -> JSON file -> GitHub Pages" patterns
+- **Email (Resend)**: Transactional email — magic-links, notifications — via Resend's HTTP API
 - **Unified Credentials**: `{CREDENTIAL_NAME}_PASSWORD` pattern for Civis compatibility
 - **Automatic Retry**: Built-in exponential backoff for all APIs
 - **Configuration as Code**: Manage settings via Google Sheets
@@ -84,7 +85,12 @@ PTV_API_KEY_PASSWORD=your-ptv-api-key
 ROI_CRM_CREDENTIALS_PASSWORD={"client_id":"your-client-id","client_secret":"your-client-secret","audience":"https://app.roicrm.net/api/1.0","roi_client_code":"YOUR_ORG"}
 GEOCODIO_API_KEY_PASSWORD=your-geocodio-api-key
 GITHUB_PAT_PASSWORD=ghp_XXXXXXXXXXXXXXXX
+RESEND_API_KEY_PASSWORD=re_XXXXXXXXXXXXXXXX
+RESEND_FROM_EMAIL=Your Name <auth@mail.commoncause.org>  # optional default sender
 ```
+
+`RESEND_FROM_EMAIL` is optional — it provides a default sender for `EmailConnector.send()`
+when no `from_addr=` is passed. The sending domain must be verified in Resend.
 
 For GitHub, use per-repo PATs by naming the credential after the project (e.g.
 `DYNAMIC_ACTION_MAP_GITHUB_PAT_PASSWORD`) and passing the matching `credential_name`
@@ -475,6 +481,35 @@ with GitHubConnector() as gh:
 **Token setup:** Use a fine-grained PAT with `Contents: Read & Write` on the target
 repo (and nothing else). Pin its expiration date to your calendar — fine-grained
 PATs max out at 1 year and will silently break the sync when they expire.
+
+### Email Example
+
+```python
+from ccef_connections import EmailConnector
+
+# Reads RESEND_API_KEY_PASSWORD; from_addr falls back to RESEND_FROM_EMAIL
+with EmailConnector() as email:
+    # Send an HTML email — returns Resend's response dict (includes the message id)
+    result = email.send(
+        to="director@example.org",
+        subject="Your sign-in link",
+        html='<a href="https://app/auth/magic?token=...">Sign in</a>',
+        from_addr="EP Roving Review <auth@mail.commoncause.org>",
+    )
+    print(result["id"])
+
+    # Plain text, multiple recipients, and a reply-to
+    email.send(
+        to=["a@example.org", "b@example.org"],
+        subject="Shift reminder",
+        text="Your review shift starts at 9am.",
+        reply_to="coordinator@commoncause.org",
+    )
+```
+
+**Sender setup:** The from-address domain must be verified in Resend (or use Resend's
+shared sending domain). Provide at least one of `html=` or `text=`. On a persistent
+rate limit (429), `send()` retries with exponential backoff before raising `RateLimitError`.
 
 ### Configuration Management Example
 
@@ -903,6 +938,16 @@ GitHub's secondary rate limits (403 with `x-ratelimit-remaining: 0`).
 - `get_file(repo, path, ref="main")` - Fetch a file. Returns `{"content_bytes": bytes, "sha": str}` or `None` if the file doesn't exist on `ref`. Raises `WriteError` if `path` is a directory.
 - `put_file(repo, path, content_bytes, message, branch="main", sha=None)` - Create or update a file. For updates, pass the file's current SHA via `sha`. Returns the new commit SHA. Raises `WriteError` on SHA conflicts (409) or validation failures (422).
 - `put_file_if_changed(repo, path, content_bytes, message, branch="main")` - The headline call site for idempotent sync jobs. Fetches the file, compares bytes, and only PUTs if there's a real change. Returns the new commit SHA, or `None` if the repo already had identical content. Safe to call on every scheduled run; no-op days produce no commits.
+
+### EmailConnector
+
+Sends transactional email (magic-links, notifications) via Resend's HTTP API. No live health endpoint — `health_check()` returns True when connected with a non-empty key (mirrors GeocodioConnector).
+
+**Credential:** `RESEND_API_KEY_PASSWORD` (plain API key string). Optional `RESEND_FROM_EMAIL` env var supplies a default sender.
+
+**Auth:** Bearer-token API key on every request. Base URL: `https://api.resend.com`. Retries on 429 (rate limit) with exponential backoff; 4xx/5xx surface immediately.
+
+- `send(to, subject, *, html=None, text=None, from_addr=None, reply_to=None)` - Send an email. `to` and `reply_to` accept a single address or a list. `from_addr` falls back to `RESEND_FROM_EMAIL`. Requires at least one of `html`/`text`. Returns Resend's response dict (includes the message `id`). Raises `ValueError` if no sender resolves or no body is given.
 
 ### ConfigManager
 

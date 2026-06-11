@@ -224,8 +224,15 @@ class TestSend:
         mock_req.return_value = _make_response(
             429, text="Too Many Requests", headers={"Retry-After": "12"}
         )
+        # Call _request directly rather than send(): send() carries
+        # @retry_email_operation, which would sleep through ~30s of real
+        # exponential backoff on a persistent 429. The 429 -> RateLimitError
+        # translation lives in _request; the decorator's presence is covered
+        # separately by test_send_has_retry_decorator.
         with pytest.raises(RateLimitError) as exc_info:
-            connected_connector.send(to="a@b.org", subject="Hi", text="x", from_addr=FROM)
+            connected_connector._request(
+                "POST", "/emails", json_body={"to": ["a@b.org"]}
+            )
         assert exc_info.value.retry_after == 12
 
     @patch("ccef_connections.connectors.email_connector.requests.request")
