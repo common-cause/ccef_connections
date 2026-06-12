@@ -20,6 +20,17 @@ logger = logging.getLogger(__name__)
 # Type for write disposition
 WriteDisposition = Literal["append", "replace", "fail_if_exists"]
 
+# OAuth scopes requested for the service-account credential. The Drive scope is
+# required to query BigQuery external tables backed by Google Sheets / Drive
+# (e.g. the actionnetwork_views source-definition override sheets); without it,
+# such queries fail with "Permission denied while getting Drive credentials".
+# A service-account credential created without explicit scopes only carries the
+# default cloud-platform scope, which does not cover Drive federation.
+BIGQUERY_SCOPES = [
+    "https://www.googleapis.com/auth/bigquery",
+    "https://www.googleapis.com/auth/drive",
+]
+
 
 class BigQueryConnector(BaseConnection):
     """
@@ -66,8 +77,11 @@ class BigQueryConnector(BaseConnection):
         try:
             creds_dict = self._credential_manager.get_bigquery_credentials()
 
-            # Create credentials from service account info
-            self._credentials = Credentials.from_service_account_info(creds_dict)
+            # Create credentials from service account info. Request the Drive
+            # scope too so Google-Sheets-backed external tables are queryable.
+            self._credentials = Credentials.from_service_account_info(
+                creds_dict, scopes=BIGQUERY_SCOPES
+            )
 
             # Use project_id from credentials if not provided
             if self._project_id is None:

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, PropertyMock, patch, call
 import pytest
 from tenacity import stop_after_attempt
 
-from ccef_connections.connectors.bigquery import BigQueryConnector
+from ccef_connections.connectors.bigquery import BigQueryConnector, BIGQUERY_SCOPES
 from ccef_connections.exceptions import (
     ConnectionError,
     CredentialError,
@@ -118,7 +118,7 @@ class TestConnect:
         assert connector_with_project._client is mock_client_instance
         assert connector_with_project._credentials is mock_creds_obj
         assert connector_with_project._project_id == "my-explicit-project"
-        mock_from_sa.assert_called_once_with(FAKE_CREDS_DICT)
+        mock_from_sa.assert_called_once_with(FAKE_CREDS_DICT, scopes=BIGQUERY_SCOPES)
         mock_client_cls.assert_called_once_with(
             credentials=mock_creds_obj, project="my-explicit-project"
         )
