@@ -356,6 +356,48 @@ def retry_github_operation(func: Callable) -> Callable:
     )(func)
 
 
+def _wait_for_asana_rate_limit(retry_state) -> float:
+    """Wait the duration the Asana API requested, plus a 2s buffer."""
+    exc = retry_state.outcome.exception()
+    if isinstance(exc, RateLimitError) and exc.retry_after:
+        return float(exc.retry_after) + 2.0
+    return 5.0
+
+
+def retry_asana_operation(func: Callable) -> Callable:
+    """
+    Decorator for Asana API operations with retry logic.
+
+    Asana returns 429 with a Retry-After header (seconds) when the
+    per-token rate limit is exceeded (1,500 req/min on paid domains,
+    150 on free). The connector translates that into RateLimitError with
+    retry_after populated; this decorator honors that exact wait time plus
+    a 2s buffer, rather than guessing via exponential backoff.
+
+    Only retries on RateLimitError — 4xx/5xx (including 402 for paid-tier
+    features on free workspaces) surface immediately so the caller sees
+    the real error without waiting through five attempts.
+
+    Args:
+        func: The function to decorate
+
+    Returns:
+        Decorated function with Asana-specific retry logic
+
+    Examples:
+        >>> @retry_asana_operation
+        ... def get_project_tasks(project_gid):
+        ...     return connector._paginate("/tasks", params={"project": project_gid})
+    """
+    return retry(
+        stop=stop_after_attempt(5),
+        wait=_wait_for_asana_rate_limit,
+        retry=retry_if_exception_type(RateLimitError),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )(func)
+
+
 def retry_email_operation(func: Callable) -> Callable:
     """
     Decorator for transactional-email (Resend) operations with retry logic.

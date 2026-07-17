@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from .connectors.action_builder import ActionBuilderConnector
     from .connectors.action_network import ActionNetworkConnector
     from .connectors.airtable import AirtableConnector
+    from .connectors.asana import AsanaConnector
     from .connectors.bigquery import BigQueryConnector
     from .connectors.email_connector import EmailConnector
     from .connectors.geocodio import GeocodioConnector
@@ -42,7 +43,7 @@ if TYPE_CHECKING:
     from .connectors.sheets_writer import SheetsWriterConnector
     from .connectors.zoom import ZoomConnector
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 # Lazy attribute -> (module, required extra or None).
 # Connectors with extra=None need only the base install (requests).
@@ -50,6 +51,7 @@ _LAZY_IMPORTS = {
     "ActionBuilderConnector": ("ccef_connections.connectors.action_builder", None),
     "ActionNetworkConnector": ("ccef_connections.connectors.action_network", None),
     "AirtableConnector": ("ccef_connections.connectors.airtable", "airtable"),
+    "AsanaConnector": ("ccef_connections.connectors.asana", None),
     "BigQueryConnector": ("ccef_connections.connectors.bigquery", "bigquery"),
     "EmailConnector": ("ccef_connections.connectors.email_connector", None),
     "GeocodioConnector": ("ccef_connections.connectors.geocodio", None),
@@ -70,6 +72,7 @@ __all__ = [
     "ActionBuilderConnector",
     "ActionNetworkConnector",
     "AirtableConnector",
+    "AsanaConnector",
     "BigQueryConnector",
     "EmailConnector",
     "GeocodioConnector",
