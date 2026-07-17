@@ -256,6 +256,18 @@ class CredentialManager:
             )
         return creds
 
+    def get_asana_api_key(self) -> str:
+        """
+        Get the Asana Personal Access Token.
+
+        Returns:
+            The Asana Personal Access Token
+
+        Raises:
+            CredentialError: If the credential is missing
+        """
+        return str(self.get_credential("ASANA_API_KEY"))
+
     def get_geocodio_key(self) -> str:
         """
         Get the Geocodio API key.

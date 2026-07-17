@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from .action_builder import ActionBuilderConnector
     from .action_network import ActionNetworkConnector
     from .airtable import AirtableConnector
+    from .asana import AsanaConnector
     from .bigquery import BigQueryConnector
     from .email_connector import EmailConnector
     from .geocodio import GeocodioConnector
@@ -30,6 +31,7 @@ _LAZY_IMPORTS = {
     "ActionBuilderConnector": ("action_builder", None),
     "ActionNetworkConnector": ("action_network", None),
     "AirtableConnector": ("airtable", "airtable"),
+    "AsanaConnector": ("asana", None),
     "BigQueryConnector": ("bigquery", "bigquery"),
     "EmailConnector": ("email_connector", None),
     "GeocodioConnector": ("geocodio", None),
