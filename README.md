@@ -6,7 +6,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 
 - **Airtable Integration**: Automatic retry, batch operations, formula filtering
 - **OpenAI/ChatGPT**: Langchain integration with structured outputs
-- **Google Sheets**: Read-only configuration management
+- **Google Sheets**: Read-only configuration management (`SheetsConnector`) plus read/write spreadsheet publishing (`SheetsWriterConnector`)
 - **BigQuery**: Full read/write data warehouse operations
 - **HelpScout**: Automated email processing — read conversations, reply, add notes, close
 - **Zoom**: Meeting and webinar attendee retrieval — participants, registrants, absentees
@@ -360,9 +360,10 @@ from ccef_connections import ROICRMConnector
 # Initialize connector (OAuth2 token fetched automatically via Auth0)
 roi = ROICRMConnector()
 
-# Search for a donor by name or email
-donors = roi.search_donors(last_name="Smith", email="jane@example.com")
-donor_id = donors[0]["id"]
+# Search for a donor by name or email (note the API's field names:
+# name_last / name_first, not last_name / first_name)
+donors = roi.search_donors(name_last="Smith", email="jane@example.com")
+donor_id = donors[0]["roi_family_id"]   # individual donor ID (roi_id = household ID)
 
 # Get full donor record
 donor = roi.get_donor(donor_id)
@@ -597,6 +598,7 @@ All credentials follow the `{CREDENTIAL_NAME}_PASSWORD` naming convention:
 - `ROI_CRM_CREDENTIALS_PASSWORD` — JSON with `client_id`, `client_secret`, `audience`, and `roi_client_code`
 - `GEOCODIO_API_KEY_PASSWORD` — API key string
 - `GITHUB_PAT_PASSWORD` — Personal Access Token string (default name). Override with `GitHubConnector(credential_name="...")` to use per-repo tokens like `DYNAMIC_ACTION_MAP_GITHUB_PAT_PASSWORD`.
+- `RESEND_API_KEY_PASSWORD` — API key string (plus optional `RESEND_FROM_EMAIL` for a default sender — not a `_PASSWORD` credential, just a plain env var)
 
 This pattern is compatible with Civis Docker environments while also working seamlessly in local development with `.env` files.
 
@@ -614,6 +616,8 @@ All connectors include automatic retry with exponential backoff:
 - **PTV**: 5 retries, handles transient connection errors and rate limits
 - **ROI CRM**: 5 retries on 429 rate limit only (500 req per 5-min window); other HTTP errors surface immediately
 - **GitHub**: 5 retries on 429 / 403 secondary rate limits, honoring the exact `Retry-After` (or `x-ratelimit-reset`) duration the API specifies plus a 2s buffer. Other HTTP errors surface immediately.
+- **Geocodio**: 5 retries on 429 rate limit only; other HTTP errors surface immediately
+- **Email (Resend)**: 5 retries on 429 rate limit only; other HTTP errors surface immediately
 - **Transient errors**: Automatic retry for network failures
 
 ### Auto-Connect Behavior
@@ -647,6 +651,7 @@ with AirtableConnector() as conn:
 - `update_record(base_id, table_name, record_id, fields)` - Update a record
 - `batch_update(base_id, table_name, records)` - Update multiple records
 - `create_record(base_id, table_name, fields)` - Create a new record
+- `batch_upsert(base_id, table_name, records, key_fields, replace=False)` - Upsert records matched on `key_fields` (patch existing, create missing; never deletes)
 
 ### OpenAIConnector
 
@@ -663,7 +668,24 @@ with AirtableConnector() as conn:
 - `get_range_as_dicts(spreadsheet_id, range_name)` - Get range as list of dicts
 - `get_worksheet_as_dicts(spreadsheet_id, worksheet_name)` - Get worksheet as list of dicts
 
+### SheetsWriterConnector
+
+Read/write Google Sheets access using the same `GOOGLE_SHEETS_CREDENTIALS_PASSWORD`
+credential as `SheetsConnector`, but with write scopes (`spreadsheets` + `drive`).
+Designed for "compute -> publish to a spreadsheet" jobs. Requires the `sheets` extra.
+
+- `get_or_create_spreadsheet(title, folder_id=None)` - Open a spreadsheet by title or create it. With `folder_id`, lookup and creation are scoped to that Drive folder (bypasses the service account's own Drive quota)
+- `get_or_add_worksheet(spreadsheet, title)` - Return a worksheet tab, adding it if missing
+- `write_worksheet(spreadsheet, worksheet_name, data, value_input_option="RAW")` - Clear a tab and write a 2D list of values (use `"USER_ENTERED"` if data contains formulas)
+- `delete_worksheet_if_exists(spreadsheet, title)` - Delete a tab if present (no-op otherwise)
+- `format_header_row(spreadsheet, worksheet_name)` - Bold and freeze row 1
+- `move_to_folder(spreadsheet, folder_id)` - Move a spreadsheet into a Drive folder (no-op if already there)
+
 ### BigQueryConnector
+
+Service-account credentials are loaded with both the BigQuery and Google Drive OAuth
+scopes (since v0.2.1), so queries against Drive-backed external tables (e.g. tables
+defined over Google Sheets) work as long as the sheet is shared with the service account.
 
 - `query(sql, params=None, timeout=None)` - Execute SQL query
 - `query_to_dataframe(sql, params=None)` - Query to pandas DataFrame
@@ -842,7 +864,7 @@ Provides access to ROI CRM donor and fundraising data via OAuth2 Client Credenti
 
 **Donors:**
 
-- `search_donors(**kwargs)` - Search donors by field values (e.g. `last_name`, `email`, `zip`)
+- `search_donors(**kwargs)` - Search donors by field values (e.g. `name_last`, `email`, `zip`). Result items use the API's field names: `roi_family_id` (individual ID), `roi_id` (household ID), `name_first`/`name_last` — not `id`/`first_name`/`last_name`. See the method docstring for the full field list.
 - `get_donor(donor_id)` - Get a donor record by ID
 - `create_donor(**kwargs)` - Create a new donor record
 - `update_donor(donor_id, **kwargs)` - Update donor fields (PATCH)
@@ -1138,7 +1160,7 @@ for conv in conversations:
 
 ## Testing
 
-The library has 838 unit tests covering all connectors and core modules.
+The library has 863 unit tests covering the connectors and core modules (every connector except `PTVConnector` and `SheetsWriterConnector`, which do not yet have dedicated test files).
 
 ```bash
 # Run all tests
@@ -1158,6 +1180,8 @@ pytest tests/test_openai.py -v
 pytest tests/test_sheets.py -v
 pytest tests/test_roi_crm.py -v
 pytest tests/test_github.py -v
+pytest tests/test_geocodio.py -v
+pytest tests/test_email_connector.py -v
 
 # Run core and config tests
 pytest tests/test_core.py -v
@@ -1208,11 +1232,14 @@ except ConnectionError as e:
     print(f"Connection failed: {e}")
 ```
 
-**Note:** `ccef_connections.ConnectionError` is a subclass of `CCEFConnectionError`, not the Python builtin `ConnectionError` (which inherits from `OSError`). If you need both, import with an alias:
+**Note:** `ccef_connections.ConnectionError` is a subclass of `CCEFConnectionError`, not the Python builtin `ConnectionError` (which inherits from `OSError`). If you need both, import with an alias that doesn't collide with the library's `CCEFConnectionError` base class:
 
 ```python
-from ccef_connections import ConnectionError as CCEFConnectionError
+from ccef_connections import ConnectionError as CCEFConnError
+# Now `ConnectionError` refers to the builtin, `CCEFConnError` to the library's.
 ```
+
+Or simply catch the exported base class `CCEFConnectionError`, which sidesteps the shadowing entirely.
 
 ## Environment Variable Overrides
 
@@ -1238,4 +1265,4 @@ For issues or questions:
 
 ## Version
 
-Current version: 0.1.0
+Current version: 0.2.1
