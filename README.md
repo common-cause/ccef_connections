@@ -1,6 +1,6 @@
 # CCEF Connections
 
-A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zoom, Action Network, Action Builder, Protect the Vote (PTV), ROI CRM, Geocodio, GitHub, and Resend (transactional email) with Civis credential compatibility.
+A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zoom, Action Network, Action Builder, Asana, Protect the Vote (PTV), ROI CRM, Geocodio, GitHub, and Resend (transactional email) with Civis credential compatibility.
 
 ## Features
 
@@ -12,6 +12,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 - **Zoom**: Meeting and webinar attendee retrieval — participants, registrants, absentees
 - **Action Network**: Full CRM access — people, tags, events, petitions, forms, fundraising, messages, and more
 - **Action Builder**: Field organizing and relationship mapping — campaigns, people/entities, tags, taggings, and connections
+- **Asana**: Read-only project and task access — tasks with custom fields, projects, sections, and workspaces, built for snapshot syncs
 - **Protect the Vote (PTV)**: Election protection shift data — volunteer signups, registered volunteers, and shift availability across all states
 - **ROI CRM**: Fundraising CRM — donors, donations, pledges, memberships, payment tokens, orders, contact info, and code tables
 - **Geocodio**: Address geocoding — forward, reverse, and batch (up to 10,000 per request) for US, Canada, and Mexico
@@ -25,8 +26,8 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 
 Dependencies are split by connector. The base install is lightweight
 (`requests`, `tenacity`, `python-dotenv`) and covers core plus all REST
-connectors: Action Builder, Action Network, Geocodio, GitHub, HelpScout,
-PTV, ROI CRM, and Zoom. Heavier connectors are opt-in via extras:
+connectors: Action Builder, Action Network, Asana, Email (Resend), Geocodio,
+GitHub, HelpScout, PTV, ROI CRM, and Zoom. Heavier connectors are opt-in via extras:
 
 | Extra | Enables | Pulls in |
 |---|---|---|
@@ -81,6 +82,7 @@ HELPSCOUT_CREDENTIALS_PASSWORD={"app_id":"your-app-id","app_secret":"your-app-se
 ZOOM_CREDENTIALS_PASSWORD={"account_id":"your-account-id","client_id":"your-client-id","client_secret":"your-client-secret"}
 ACTION_NETWORK_API_KEY_PASSWORD=your-action-network-api-key
 ACTION_BUILDER_CREDENTIALS_PASSWORD={"api_token":"your-api-token","subdomain":"yourorg"}
+ASANA_API_KEY_PASSWORD=your-asana-personal-access-token
 PTV_API_KEY_PASSWORD=your-ptv-api-key
 ROI_CRM_CREDENTIALS_PASSWORD={"client_id":"your-client-id","client_secret":"your-client-secret","audience":"https://app.roicrm.net/api/1.0","roi_client_code":"YOUR_ORG"}
 GEOCODIO_API_KEY_PASSWORD=your-geocodio-api-key
@@ -313,6 +315,32 @@ ab.delete_tagging(campaign_id, tag_id, taggings[0]["id"])
 # List connections for a person and mark one inactive
 connections = ab.list_connections(campaign_id, person_id)
 ab.update_connection(campaign_id, person_id, connections[0]["id"], inactive=True)
+```
+
+### Asana Example
+
+```python
+from ccef_connections import AsanaConnector
+
+# PAT loaded from ASANA_API_KEY_PASSWORD; connect() validates it via GET /users/me
+with AsanaConnector() as asana:
+    # Find the workspace and its projects
+    workspaces = asana.get_workspaces()
+    projects = asana.get_projects(workspaces[0]["gid"], archived=False)
+
+    # Pull every task in a project with full fields (DEFAULT_TASK_FIELDS),
+    # including custom fields — each custom field carries a display_value
+    # string rendering, the recommended consumption path for syncs
+    tasks = asana.get_project_tasks(projects[0]["gid"])
+
+    # Incremental pull: only tasks modified since a given time
+    recent = asana.get_project_tasks(
+        projects[0]["gid"], modified_since="2026-07-01T00:00:00Z"
+    )
+
+    # Sections and subtasks
+    sections = asana.get_sections(projects[0]["gid"])
+    subtasks = asana.get_subtasks(tasks[0]["gid"])
 ```
 
 ### Protect the Vote (PTV) Example
@@ -594,6 +622,7 @@ All credentials follow the `{CREDENTIAL_NAME}_PASSWORD` naming convention:
 - `ZOOM_CREDENTIALS_PASSWORD` — JSON with `account_id`, `client_id`, and `client_secret`
 - `ACTION_NETWORK_API_KEY_PASSWORD` — API key string
 - `ACTION_BUILDER_CREDENTIALS_PASSWORD` — JSON with `api_token` and `subdomain`
+- `ASANA_API_KEY_PASSWORD` — Personal Access Token string (PATs work on all Asana plan tiers and inherit the project access of the user they belong to)
 - `PTV_API_KEY_PASSWORD` — API key string
 - `ROI_CRM_CREDENTIALS_PASSWORD` — JSON with `client_id`, `client_secret`, `audience`, and `roi_client_code`
 - `GEOCODIO_API_KEY_PASSWORD` — API key string
@@ -613,6 +642,7 @@ All connectors include automatic retry with exponential backoff:
 - **Zoom**: 5 retries, handles rate limits with auto token refresh on 401
 - **Action Network**: 5 retries, handles 429 rate limits (4 req/s)
 - **Action Builder**: 5 retries, handles 429 rate limits (4 req/s)
+- **Asana**: 5 retries on 429 rate limit only (1,500 req/min paid, 150 free), honoring the exact `Retry-After` duration the API specifies plus a 2s buffer. Other HTTP errors — including 402 for paid-tier features on a free workspace — surface immediately.
 - **PTV**: 5 retries, handles transient connection errors and rate limits
 - **ROI CRM**: 5 retries on 429 rate limit only (500 req per 5-min window); other HTTP errors surface immediately
 - **GitHub**: 5 retries on 429 / 403 secondary rate limits, honoring the exact `Retry-After` (or `x-ratelimit-reset`) duration the API specifies plus a 2s buffer. Other HTTP errors surface immediately.
@@ -827,6 +857,29 @@ Action Builder is a relationship-mapping and field organizing platform. All reso
 - `list_connections(campaign_id, person_id)` - List connections for a person
 - `get_connection(campaign_id, person_id, connection_id)` - Get a single connection
 - `update_connection(campaign_id, person_id, connection_id, inactive)` - Toggle inactive status
+
+### AsanaConnector
+
+Provides read-only access to Asana tasks (including custom fields), projects, sections, and workspaces — built for snapshot-sync jobs that pull whole projects into a warehouse.
+
+**Credential:** `ASANA_API_KEY_PASSWORD` (Personal Access Token string). PATs work on all Asana plan tiers, are tied to a human user account, and inherit that user's project access. `connect()` validates the token via `GET /users/me`.
+
+**Auth:** Bearer-token PAT on every request. Base URL: `https://app.asana.com/api/1.0`. Rate limit: 1,500 req/min on paid domains (150 free), per token; retries on 429 honor the `Retry-After` header plus a 2s buffer. Asana returns **402 Payment Required** for paid-tier endpoints or parameters used on a free workspace — the connector surfaces that as a non-retryable error with an explicit message.
+
+- `get_workspaces()` - List all workspaces visible to the PAT
+- `get_projects(workspace_gid, archived=None)` - List projects in a workspace; `archived` filters to archived (True) or active (False) projects
+- `get_project(project_gid, opt_fields=None)` - Get one project's metadata (request `custom_field_settings` via `opt_fields` for its custom-field schema)
+- `get_sections(project_gid)` - List a project's sections
+- `get_project_tasks(project_gid, opt_fields=DEFAULT_TASK_FIELDS, modified_since=None, completed_since=None)` - The workhorse: list every task in a project with full fields; datetime filters accept ISO-8601 strings or `datetime` objects
+- `get_task(task_gid, opt_fields=DEFAULT_TASK_FIELDS)` - Get a single task
+- `get_subtasks(task_gid, opt_fields=DEFAULT_TASK_FIELDS)` - List a task's subtasks
+
+**Important concepts:**
+
+- All GIDs are opaque strings, not ints.
+- Default Asana responses are compact stubs (`gid`/`name`/`resource_type`) — a useful task pull requires `opt_fields`. The module-level `DEFAULT_TASK_FIELDS` constant covers the common sync fields (name, notes, completion, dates, assignee, memberships, tags, custom fields, parent, permalink); override per call with a comma-separated string (dot notation for nested fields, e.g. `assignee.email`).
+- Custom fields requested via `opt_fields=custom_fields` come back as full objects with `gid`, `name`, `type`, type-specific value fields, and `display_value` — a universal string rendering that is the recommended consumption path for syncs.
+- Pagination is handled internally with offset tokens (`limit=100` per page); offset tokens are never persisted across runs.
 
 ### PTVConnector
 
@@ -1160,7 +1213,7 @@ for conv in conversations:
 
 ## Testing
 
-The library has 863 unit tests covering the connectors and core modules (every connector except `PTVConnector` and `SheetsWriterConnector`, which do not yet have dedicated test files).
+The library has 926 unit tests covering the connectors and core modules (every connector except `PTVConnector` and `SheetsWriterConnector`, which do not yet have dedicated test files).
 
 ```bash
 # Run all tests
@@ -1172,6 +1225,7 @@ pytest tests/ -v --cov=ccef_connections
 # Run tests for a specific connector
 pytest tests/test_action_builder.py -v
 pytest tests/test_action_network.py -v
+pytest tests/test_asana.py -v
 pytest tests/test_helpscout.py -v
 pytest tests/test_zoom.py -v
 pytest tests/test_airtable.py -v
@@ -1265,4 +1319,4 @@ For issues or questions:
 
 ## Version
 
-Current version: 0.2.1
+Current version: 0.3.0
