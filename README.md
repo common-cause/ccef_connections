@@ -709,6 +709,8 @@ with AirtableConnector() as conn:
 
 - `get_table(base_id, table_name)` - Get a table instance
 - `get_records(base_id, table_name, formula=None, ...)` - Query records with retry
+- `get_base_schema(base_id)` - Full base schema (tables, fields, types) via the metadata API; needs PAT scope `schema.bases:read` + per-base access
+- `list_bases()` - All bases visible to the PAT (`[{id, name, permission_level}]`); needs `schema.bases:read`
 - `update_record(base_id, table_name, record_id, fields)` - Update a record
 - `batch_update(base_id, table_name, records)` - Update multiple records
 - `create_record(base_id, table_name, fields)` - Create a new record

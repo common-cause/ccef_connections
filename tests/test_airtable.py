@@ -551,6 +551,86 @@ class TestCreateRecord:
         assert result["id"] == "recNEW"
 
 
+# -- get_base_schema ---------------------------------------------------------
+
+
+class TestGetBaseSchema:
+    def test_get_base_schema_success(self, connected_connector):
+        mock_schema = MagicMock()
+        mock_base = MagicMock()
+        mock_base.schema.return_value = mock_schema
+        connected_connector._api.base.return_value = mock_base
+
+        result = connected_connector.get_base_schema("appABC123")
+
+        assert result is mock_schema
+        connected_connector._api.base.assert_called_once_with("appABC123")
+        mock_base.schema.assert_called_once_with()
+
+    @patch("ccef_connections.connectors.airtable.Api")
+    def test_get_base_schema_auto_connects(self, mock_api_cls, connector):
+        mock_api_instance = MagicMock()
+        mock_schema = MagicMock()
+        mock_api_cls.return_value = mock_api_instance
+        mock_api_instance.base.return_value.schema.return_value = mock_schema
+
+        result = connector.get_base_schema("appABC123")
+
+        assert connector.is_connected()
+        assert result is mock_schema
+
+# -- list_bases ----------------------------------------------------------------
+
+
+class TestListBases:
+    def _mock_base(self, base_id, name, permission_level):
+        b = MagicMock()
+        b.id = base_id
+        b.name = name
+        b.permission_level = permission_level
+        return b
+
+    def test_list_bases_success(self, connected_connector):
+        connected_connector._api.bases.return_value = [
+            self._mock_base("appAAA", "NE Field Report", "create"),
+            self._mock_base("appBBB", "PA Quiz", "read"),
+        ]
+
+        result = connected_connector.list_bases()
+
+        assert result == [
+            {"id": "appAAA", "name": "NE Field Report", "permission_level": "create"},
+            {"id": "appBBB", "name": "PA Quiz", "permission_level": "read"},
+        ]
+        connected_connector._api.bases.assert_called_once_with()
+
+    def test_list_bases_empty(self, connected_connector):
+        connected_connector._api.bases.return_value = []
+
+        assert connected_connector.list_bases() == []
+
+    def test_list_bases_missing_attrs_default_none(self, connected_connector):
+        """Base objects lacking name/permission_level yield None, not raise."""
+        bare = MagicMock(spec=["id"])
+        bare.id = "appCCC"
+        connected_connector._api.bases.return_value = [bare]
+
+        result = connected_connector.list_bases()
+
+        assert result == [{"id": "appCCC", "name": None, "permission_level": None}]
+
+    @patch("ccef_connections.connectors.airtable.Api")
+    def test_list_bases_auto_connects(self, mock_api_cls, connector):
+        mock_api_instance = MagicMock()
+        mock_api_instance.bases.return_value = []
+        mock_api_cls.return_value = mock_api_instance
+
+        result = connector.list_bases()
+
+        assert connector.is_connected()
+        assert result == []
+
+
 # -- Context Manager ---------------------------------------------------------
 
 
@@ -621,6 +701,12 @@ class TestRetryDecoratorIntegration:
 
     def test_create_record_has_retry(self):
         assert hasattr(AirtableConnector.create_record, "retry")
+
+    def test_get_base_schema_has_retry(self):
+        assert hasattr(AirtableConnector.get_base_schema, "retry")
+
+    def test_list_bases_has_retry(self):
+        assert hasattr(AirtableConnector.list_bases, "retry")
 
     def test_get_table_has_no_retry(self):
         """get_table should NOT have retry logic."""

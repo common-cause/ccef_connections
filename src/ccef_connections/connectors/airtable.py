@@ -9,6 +9,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from pyairtable import Api, Table
+from pyairtable.models.schema import BaseSchema
 
 from ..core.base import BaseConnection
 from ..core.retry import retry_airtable_operation
@@ -135,6 +136,71 @@ class AirtableConnector(BaseConnection):
         """
         table = self.get_table(base_id, table_name)
         return table.all(formula=formula, max_records=max_records, view=view)
+
+    @retry_airtable_operation
+    def get_base_schema(self, base_id: str) -> BaseSchema:
+        """
+        Fetch the full schema for a base via Airtable's metadata API.
+
+        Returns every table in the base with its fields, field types, and
+        views. Requires the PAT to have the ``schema.bases:read`` scope AND
+        access to the specific base (Airtable PATs are scoped per-base; a
+        base outside the token's scope raises a 403).
+
+        Args:
+            base_id: The Airtable base ID (e.g., 'appXXX')
+
+        Returns:
+            pyairtable.models.schema.BaseSchema — iterate ``.tables``; each
+            table has ``.id``, ``.name``, and ``.fields`` (with ``.name`` /
+            ``.type``).
+
+        Examples:
+            >>> connector = AirtableConnector()
+            >>> schema = connector.get_base_schema('appXXX')
+            >>> [t.name for t in schema.tables]
+            ['Shifted Volunteers', 'Incident Reports']
+        """
+        if not self._is_connected or self._api is None:
+            self.connect()
+
+        if self._api is None:
+            raise ConnectionError("Not connected to Airtable")
+
+        logger.debug(f"Fetching base schema: {base_id}")
+        return self._api.base(base_id).schema()
+
+    @retry_airtable_operation
+    def list_bases(self) -> List[Dict[str, Any]]:
+        """
+        List all bases the credential's PAT can see, via the metadata API.
+
+        Requires the PAT to have the ``schema.bases:read`` scope. Useful for
+        verifying per-base PAT coverage before registering a base for sync.
+
+        Returns:
+            List of dicts: ``[{"id": "app...", "name": ..., "permission_level": ...}]``
+
+        Examples:
+            >>> connector = AirtableConnector()
+            >>> {b["id"] for b in connector.list_bases()}
+            {'appXXX', 'appYYY'}
+        """
+        if not self._is_connected or self._api is None:
+            self.connect()
+
+        if self._api is None:
+            raise ConnectionError("Not connected to Airtable")
+
+        logger.debug("Listing bases visible to the current PAT")
+        return [
+            {
+                "id": base.id,
+                "name": getattr(base, "name", None),
+                "permission_level": getattr(base, "permission_level", None),
+            }
+            for base in self._api.bases()
+        ]
 
     @retry_airtable_operation
     def update_record(
