@@ -1,6 +1,6 @@
 # CCEF Connections
 
-A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zoom, Action Network, Action Builder, Asana, Protect the Vote (PTV), ROI CRM, Geocodio, GitHub, and Resend (transactional email) with Civis credential compatibility.
+A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zoom, Action Network, Action Builder, Asana, Protect the Vote (PTV), ROI CRM, Geocodio, GitHub, Hex, and Resend (transactional email) with Civis credential compatibility.
 
 ## Features
 
@@ -17,6 +17,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 - **ROI CRM**: Fundraising CRM — donors, donations, pledges, memberships, payment tokens, orders, contact info, and code tables
 - **Geocodio**: Address geocoding — forward, reverse, and batch (up to 10,000 per request) for US, Canada, and Mexico
 - **GitHub**: File-write access to a repository via the REST contents API — idempotent commits suitable for "data sync -> JSON file -> GitHub Pages" patterns
+- **Hex**: Notebook/dashboard platform API — projects, full cell CRUD, and run triggering; the transport layer under the `hex-toolkit` library
 - **Email (Resend)**: Transactional email — magic-links, notifications — via Resend's HTTP API
 - **Unified Credentials**: `{CREDENTIAL_NAME}_PASSWORD` pattern for Civis compatibility
 - **Automatic Retry**: Built-in exponential backoff for all APIs
@@ -27,7 +28,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 Dependencies are split by connector. The base install is lightweight
 (`requests`, `tenacity`, `python-dotenv`) and covers core plus all REST
 connectors: Action Builder, Action Network, Asana, Email (Resend), Geocodio,
-GitHub, HelpScout, PTV, ROI CRM, and Zoom. Heavier connectors are opt-in via extras:
+GitHub, HelpScout, Hex, PTV, ROI CRM, and Zoom. Heavier connectors are opt-in via extras:
 
 | Extra | Enables | Pulls in |
 |---|---|---|
@@ -343,6 +344,34 @@ with AsanaConnector() as asana:
     subtasks = asana.get_subtasks(tasks[0]["gid"])
 ```
 
+### Hex Example
+
+```python
+from ccef_connections import HexConnector
+
+# PAT loaded from HEX_API_KEY_PASSWORD
+with HexConnector() as hx:
+    # NOTE: on a shared workspace the project list includes other member
+    # orgs' projects — filter by owner before anything write-shaped
+    mine = [p for p in hx.list_projects() if p["owner"]["email"] == "rkerth@commoncause.org"]
+
+    # Read every cell's source (SQL/code/markdown) in a project
+    cells = hx.list_cells(mine[0]["id"])
+
+    # Edit a SQL cell's source in the project DRAFT (never auto-publishes)
+    sql = next(c for c in cells if c["cellType"] == "SQL")
+    hx.update_cell(sql["id"], {"sqlCell": {
+        "source": "SELECT 1", "outputDataframe": sql["contents"]["sqlCell"]["outputDataframe"],
+    }})
+
+    # Trigger a refresh of the published app
+    run = hx.run_project(mine[0]["id"])
+```
+
+Higher-level round-trip workflows (YAML export/import via the Hex CLI, git-versioned
+per-cell extraction, publish guardrails) live in the `hex-toolkit` library, which
+consumes this connector.
+
 ### Protect the Vote (PTV) Example
 
 ```python
@@ -627,6 +656,7 @@ All credentials follow the `{CREDENTIAL_NAME}_PASSWORD` naming convention:
 - `ROI_CRM_CREDENTIALS_PASSWORD` — JSON with `client_id`, `client_secret`, `audience`, and `roi_client_code`
 - `GEOCODIO_API_KEY_PASSWORD` — API key string
 - `GITHUB_PAT_PASSWORD` — Personal Access Token string (default name). Override with `GitHubConnector(credential_name="...")` to use per-repo tokens like `DYNAMIC_ACTION_MAP_GITHUB_PAT_PASSWORD`.
+- `HEX_API_KEY_PASSWORD` — Personal Access Token string (workspace admin must have API access enabled; tokens created under user settings → API keys)
 - `RESEND_API_KEY_PASSWORD` — API key string (plus optional `RESEND_FROM_EMAIL` for a default sender — not a `_PASSWORD` credential, just a plain env var)
 
 This pattern is compatible with Civis Docker environments while also working seamlessly in local development with `.env` files.
@@ -647,6 +677,7 @@ All connectors include automatic retry with exponential backoff:
 - **ROI CRM**: 5 retries on 429 rate limit only (500 req per 5-min window); other HTTP errors surface immediately
 - **GitHub**: 5 retries on 429 / 403 secondary rate limits, honoring the exact `Retry-After` (or `x-ratelimit-reset`) duration the API specifies plus a 2s buffer. Other HTTP errors surface immediately.
 - **Geocodio**: 5 retries on 429 rate limit only; other HTTP errors surface immediately
+- **Hex**: 3 retries with backoff on read calls (60 req/min limit); writes (create/update/delete cell) run single-shot — a retried POST could duplicate a cell
 - **Email (Resend)**: 5 retries on 429 rate limit only; other HTTP errors surface immediately
 - **Transient errors**: Automatic retry for network failures
 
@@ -880,6 +911,31 @@ Provides read-only access to Asana tasks (including custom fields), projects, se
 - Default Asana responses are compact stubs (`gid`/`name`/`resource_type`) — a useful task pull requires `opt_fields`. The module-level `DEFAULT_TASK_FIELDS` constant covers the common sync fields (name, notes, completion, dates, assignee, memberships, tags, custom fields, parent, permalink); override per call with a comma-separated string (dot notation for nested fields, e.g. `assignee.email`).
 - Custom fields requested via `opt_fields=custom_fields` come back as full objects with `gid`, `name`, `type`, type-specific value fields, and `display_value` — a universal string rendering that is the recommended consumption path for syncs.
 - Pagination is handled internally with offset tokens (`limit=100` per page); offset tokens are never persisted across runs.
+
+### HexConnector
+
+Thin REST client for the Hex public API — projects, full cell CRUD, and run triggering. Transport only: round-trip workflows (YAML export/import via the Hex CLI, git-versioned per-cell extraction, publish guardrails) live in the `hex-toolkit` library, which consumes this connector.
+
+**Credential:** `HEX_API_KEY_PASSWORD` (Personal Access Token string). The workspace admin must have API access enabled; tokens are created under user settings → API keys. Override the credential name or pass `base_url` for a single-tenant instance via the constructor.
+
+**Auth:** Bearer-token PAT on every request. Base URL: `https://app.hex.tech/api/v1`. Rate limit: 60 req/min per user (plus 25 concurrent kernels); 429s raise `RateLimitError` honoring `Retry-After`. Reads retry with backoff; writes run single-shot (a retried POST could duplicate a cell).
+
+- `list_projects(params=None)` - All viewable projects, pagination followed. On a shared workspace this includes other orgs' projects — filter by owner before writing
+- `get_project(project_id)` / `create_project(title, description=None)`
+- `list_cells(project_id)` - Every cell with type, label, and full source (`sqlCell`/`codeCell`/`markdownCell`); INPUT/CHART/MAP cells appear with null contents
+- `get_cell(cell_id)` / `get_cell_output(cell_id)`
+- `create_cell(project_id, cell_type, contents, label=None, data_connection_id=None)` - Into the project draft
+- `update_cell(cell_id, contents=None, data_connection_id=None)` - Draft edit; also the working path for attaching a data connection; `label` PATCHes are ignored by the API
+- `delete_cell(cell_id)`
+- `list_data_connections()` - Workspace connections (id, name, type)
+- `run_project(project_id, options=None)` - Runs the latest PUBLISHED version
+- `list_runs(project_id)` / `get_run(project_id, run_id)` / `cancel_run(project_id, run_id)`
+
+**Important concepts:**
+
+- Cell writes bump the cell's `id` but keep `staticId` stable — treat `staticId` as the durable identity. The Hex YAML export's `cellId` equals the API `staticId`.
+- Cell edits land in the project **draft**; nothing here publishes. There is no publish endpoint in the API at all (verified 2026-07-22).
+- Quirk: `dataConnectionId` on cell CREATE does not attach the connection (and a SQL cell without one fails the whole app run) — but a follow-up `update_cell(cell_id, data_connection_id=...)` PATCH attaches it fine. hex-toolkit's `create_cell` verb does the two-step automatically.
 
 ### PTVConnector
 

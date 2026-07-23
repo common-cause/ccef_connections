@@ -1,6 +1,6 @@
 # CCEF Connections
 
-Reusable Python library providing unified connection management for CCEF data integrations. Connectors: Airtable, OpenAI/ChatGPT, Google Sheets, BigQuery, HelpScout, Zoom, Action Network. Uses Civis-compatible {CREDENTIAL_NAME}_PASSWORD env var pattern. No ActionBuilder connector yet.
+Reusable Python library providing unified connection management for CCEF data integrations. Connectors: Airtable, OpenAI/ChatGPT, Google Sheets, BigQuery, HelpScout, Zoom, Action Network, Action Builder, Asana, PTV, ROI CRM, Geocodio, GitHub, Hex, Email (Resend). Uses Civis-compatible {CREDENTIAL_NAME}_PASSWORD env var pattern.
 
 ## PII / Data Handling
 

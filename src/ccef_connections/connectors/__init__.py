@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from .geocodio import GeocodioConnector
     from .github import GitHubConnector
     from .helpscout import HelpScoutConnector
+    from .hex import HexConnector
     from .openai import OpenAIConnector
     from .ptv import PTVConnector
     from .roi_crm import ROICRMConnector
@@ -37,6 +38,7 @@ _LAZY_IMPORTS = {
     "GeocodioConnector": ("geocodio", None),
     "GitHubConnector": ("github", None),
     "HelpScoutConnector": ("helpscout", None),
+    "HexConnector": ("hex", None),
     "OpenAIConnector": ("openai", "openai"),
     "PTVConnector": ("ptv", None),
     "ROICRMConnector": ("roi_crm", None),

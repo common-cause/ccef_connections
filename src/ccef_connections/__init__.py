@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from .connectors.geocodio import GeocodioConnector
     from .connectors.github import GitHubConnector
     from .connectors.helpscout import HelpScoutConnector
+    from .connectors.hex import HexConnector
     from .connectors.openai import OpenAIConnector
     from .connectors.ptv import PTVConnector
     from .connectors.roi_crm import ROICRMConnector
@@ -43,7 +44,7 @@ if TYPE_CHECKING:
     from .connectors.sheets_writer import SheetsWriterConnector
     from .connectors.zoom import ZoomConnector
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 # Lazy attribute -> (module, required extra or None).
 # Connectors with extra=None need only the base install (requests).
@@ -57,6 +58,7 @@ _LAZY_IMPORTS = {
     "GeocodioConnector": ("ccef_connections.connectors.geocodio", None),
     "GitHubConnector": ("ccef_connections.connectors.github", None),
     "HelpScoutConnector": ("ccef_connections.connectors.helpscout", None),
+    "HexConnector": ("ccef_connections.connectors.hex", None),
     "OpenAIConnector": ("ccef_connections.connectors.openai", "openai"),
     "PTVConnector": ("ccef_connections.connectors.ptv", None),
     "ROICRMConnector": ("ccef_connections.connectors.roi_crm", None),
@@ -78,6 +80,7 @@ __all__ = [
     "GeocodioConnector",
     "GitHubConnector",
     "HelpScoutConnector",
+    "HexConnector",
     "OpenAIConnector",
     "PTVConnector",
     "ROICRMConnector",

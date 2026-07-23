@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ccef-connections"
-version = "0.3.0"
+version = "0.4.0"
 description = "Reusable connection library for CCEF data integrations"
 authors = [{name = "Common Cause Education Fund"}]
 license = {text = "MIT"}
@@ -12,7 +12,7 @@ requires-python = ">=3.9"
 readme = "README.md"
 # Base install covers core (credentials, retry, exceptions) and all REST
 # connectors: Action Builder, Action Network, Asana, Email (Resend), Geocodio,
-# GitHub, HelpScout, PTV, ROI CRM, Zoom. Heavier connectors live behind extras below.
+# GitHub, HelpScout, Hex, PTV, ROI CRM, Zoom. Heavier connectors live behind extras below.
 dependencies = [
     "requests>=2.31.0",
     "tenacity>=8.2.0",

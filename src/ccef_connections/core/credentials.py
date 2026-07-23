@@ -311,6 +311,22 @@ class CredentialManager:
         """
         return str(self.get_credential(credential_name))
 
+    def get_hex_api_key(self, credential_name: str = "HEX_API_KEY") -> str:
+        """
+        Get a Hex personal access token.
+
+        Args:
+            credential_name: Name of the credential (default: "HEX_API_KEY").
+                The env var read is {credential_name}_PASSWORD.
+
+        Returns:
+            The token as a string
+
+        Raises:
+            CredentialError: If the credential is missing
+        """
+        return str(self.get_credential(credential_name))
+
     def get_roi_crm_credentials(self) -> Dict[str, Any]:
         """
         Get ROI CRM OAuth2 Client Credentials.
