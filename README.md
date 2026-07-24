@@ -4,7 +4,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 
 ## Features
 
-- **Airtable Integration**: Automatic retry, batch operations, formula filtering
+- **Airtable Integration**: Automatic retry, batch operations, formula filtering, base-schema metadata (`get_base_schema`, `list_bases`)
 - **OpenAI/ChatGPT**: Langchain integration with structured outputs
 - **Google Sheets**: Read-only configuration management (`SheetsConnector`) plus read/write spreadsheet publishing (`SheetsWriterConnector`)
 - **BigQuery**: Full read/write data warehouse operations
@@ -88,6 +88,7 @@ PTV_API_KEY_PASSWORD=your-ptv-api-key
 ROI_CRM_CREDENTIALS_PASSWORD={"client_id":"your-client-id","client_secret":"your-client-secret","audience":"https://app.roicrm.net/api/1.0","roi_client_code":"YOUR_ORG"}
 GEOCODIO_API_KEY_PASSWORD=your-geocodio-api-key
 GITHUB_PAT_PASSWORD=ghp_XXXXXXXXXXXXXXXX
+HEX_API_KEY_PASSWORD=your-hex-personal-access-token
 RESEND_API_KEY_PASSWORD=re_XXXXXXXXXXXXXXXX
 RESEND_FROM_EMAIL=Your Name <auth@mail.commoncause.org>  # optional default sender
 ```
@@ -1271,7 +1272,7 @@ for conv in conversations:
 
 ## Testing
 
-The library has 926 unit tests covering the connectors and core modules (every connector except `PTVConnector` and `SheetsWriterConnector`, which do not yet have dedicated test files).
+The library has 968 unit tests covering the connectors and core modules (every connector except `PTVConnector` and `SheetsWriterConnector`, which do not yet have dedicated test files).
 
 ```bash
 # Run all tests
@@ -1292,6 +1293,7 @@ pytest tests/test_openai.py -v
 pytest tests/test_sheets.py -v
 pytest tests/test_roi_crm.py -v
 pytest tests/test_github.py -v
+pytest tests/test_hex.py -v
 pytest tests/test_geocodio.py -v
 pytest tests/test_email_connector.py -v
 
@@ -1377,4 +1379,4 @@ For issues or questions:
 
 ## Version
 
-Current version: 0.3.0
+Current version: 0.5.0

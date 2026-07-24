@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from .connectors.sheets_writer import SheetsWriterConnector
     from .connectors.zoom import ZoomConnector
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 # Lazy attribute -> (module, required extra or None).
 # Connectors with extra=None need only the base install (requests).
