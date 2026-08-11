@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from .roi_crm import ROICRMConnector
     from .sheets import SheetsConnector
     from .sheets_writer import SheetsWriterConnector
+    from .tatango import TatangoConnector
     from .zoom import ZoomConnector
 
 # Lazy attribute -> (submodule, required extra or None).
@@ -44,6 +45,7 @@ _LAZY_IMPORTS = {
     "ROICRMConnector": ("roi_crm", None),
     "SheetsConnector": ("sheets", "sheets"),
     "SheetsWriterConnector": ("sheets_writer", "sheets"),
+    "TatangoConnector": ("tatango", None),
     "ZoomConnector": ("zoom", None),
 }
 

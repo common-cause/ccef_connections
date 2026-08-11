@@ -355,6 +355,29 @@ class CredentialManager:
             )
         return creds
 
+    def get_tatango_credentials(self) -> Dict[str, str]:
+        """
+        Get Tatango (MomoGood) Messaging API v2 credentials.
+
+        Tatango authenticates with HTTP Basic where the username is the
+        Tatango **login email** and the password is the API key, so this
+        reads two credentials:
+
+        - ``TATANGO_LOGIN_EMAIL_PASSWORD`` — the login email (not a
+          secret, but carried as a credential for Civis compatibility)
+        - ``TATANGO_API_KEY_PASSWORD`` — the API key
+
+        Returns:
+            Dict with 'email' and 'api_key' keys
+
+        Raises:
+            CredentialError: If either credential is missing
+        """
+        return {
+            "email": str(self.get_credential("TATANGO_LOGIN_EMAIL")),
+            "api_key": str(self.get_credential("TATANGO_API_KEY")),
+        }
+
     def clear_cache(self) -> None:
         """Clear the credentials cache. Useful for testing or credential rotation."""
         self._credentials_cache.clear()

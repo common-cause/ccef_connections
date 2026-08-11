@@ -387,6 +387,76 @@ class TestUnsubscribe:
 
 
 # ==========================================================================
+# Phone / SMS ops
+# ==========================================================================
+
+
+class TestPhoneOps:
+    @patch("ccef_connections.connectors.action_network.requests.request")
+    def test_find_people_by_phone_builds_exact_filter(self, mock_req, connected):
+        mock_req.return_value = _make_response(
+            200, _page("osdi:people", [{"given_name": "Jane"}])
+        )
+        result = connected.find_people_by_phone("13125550123")
+        assert len(result) == 1
+        params = mock_req.call_args.kwargs["params"]
+        assert params == {"filter": "phone_number eq '13125550123'"}
+
+    @patch("ccef_connections.connectors.action_network.requests.request")
+    def test_find_people_by_phone_no_match(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, _page("osdi:people", []))
+        assert connected.find_people_by_phone("19995550000") == []
+
+    @patch("ccef_connections.connectors.action_network.requests.request")
+    def test_get_person_phone(self, mock_req, connected):
+        mock_req.return_value = _make_response(
+            200,
+            {
+                "phone_numbers": [
+                    {
+                        "primary": True,
+                        "number": "13125550123",
+                        "status": "subscribed",
+                        "number_type": "Mobile",
+                    }
+                ],
+            },
+        )
+        phone = connected.get_person_phone("abc-123")
+        assert phone["number"] == "13125550123"
+        assert phone["status"] == "subscribed"
+        assert mock_req.call_args.args[1].endswith("/people/abc-123")
+
+    @patch("ccef_connections.connectors.action_network.requests.request")
+    def test_get_person_phone_none_when_missing(self, mock_req, connected):
+        mock_req.return_value = _make_response(200, {"phone_numbers": []})
+        assert connected.get_person_phone("abc-123") is None
+
+    @patch("ccef_connections.connectors.action_network.requests.request")
+    def test_set_person_phone_status_is_status_only(self, mock_req, connected):
+        """The PUT body must never carry a number — a number in a phone PUT
+        REPLACES the person's phone (live-verified 2026-06-10)."""
+        mock_req.return_value = _make_response(
+            200, {"phone_numbers": [{"status": "unsubscribed"}]}
+        )
+        result = connected.set_person_phone_status("abc-123", "unsubscribed")
+        assert result["phone_numbers"][0]["status"] == "unsubscribed"
+        assert mock_req.call_args.args[0] == "PUT"
+        assert mock_req.call_args.args[1].endswith("/people/abc-123")
+        body = mock_req.call_args.kwargs["json"]
+        assert body == {"phone_numbers": [{"status": "unsubscribed"}]}
+        assert "number" not in body["phone_numbers"][0]
+
+    @patch("ccef_connections.connectors.action_network.requests.request")
+    def test_set_person_phone_status_resubscribe(self, mock_req, connected):
+        mock_req.return_value = _make_response(
+            200, {"phone_numbers": [{"status": "subscribed"}]}
+        )
+        result = connected.set_person_phone_status("abc-123", "subscribed")
+        assert result["phone_numbers"][0]["status"] == "subscribed"
+
+
+# ==========================================================================
 # Tags
 # ==========================================================================
 

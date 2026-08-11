@@ -349,6 +349,84 @@ class ActionNetworkConnector(BaseConnection):
         )
         return result or {}
 
+    # -- Phone / SMS ops --------------------------------------------------------
+    #
+    # Live-verified facts these methods encode (tatango-sync AN live test,
+    # 2026-06-10, docs/an_live_test_plan.md):
+    # - AN stores phones as 11 digits with leading `1`, no `+`.
+    # - The `phone_number eq` filter is exact-match, ~1 s, and freshly indexed.
+    # - A phone PUT that carries `number` REPLACES the person's phone (the
+    #   array stays single-element — AN effectively holds one phone per
+    #   person). A status-only PUT is the safe write shape.
+    # - Phone and email channels are independent: a phone-status write leaves
+    #   email status untouched.
+
+    @retry_action_network_operation
+    def find_people_by_phone(self, phone_number: str) -> List[Dict[str, Any]]:
+        """
+        Find people by exact phone-number match.
+
+        Args:
+            phone_number: Phone in AN's stored format — 11 digits with a
+                leading ``1``, no ``+`` (e.g. ``13125550123``)
+
+        Returns:
+            List of matching person resources (typically 0 or 1)
+        """
+        return self._paginate(
+            "/people",
+            "osdi:people",
+            params={"filter": f"phone_number eq '{phone_number}'"},
+        )
+
+    @retry_action_network_operation
+    def get_person_phone(self, person_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a person's phone entry (number, status, number_type).
+
+        AN effectively holds one phone per person, so this returns the
+        first (only) ``phone_numbers`` entry.
+
+        Args:
+            person_id: Action Network person UUID
+
+        Returns:
+            The phone entry dict, or None if the person has no phone
+        """
+        result = self._request("GET", f"/people/{person_id}") or {}
+        phones = result.get("phone_numbers") or []
+        return phones[0] if phones else None
+
+    @retry_action_network_operation
+    def set_person_phone_status(
+        self, person_id: str, status: str
+    ) -> Dict[str, Any]:
+        """
+        Set a person's SMS subscription status (status-only PUT).
+
+        Sends ``{"phone_numbers": [{"status": ...}]}`` with **no number** —
+        including a number in a phone PUT replaces the person's phone
+        outright (live-verified), so this method never accepts one. To
+        change a number, that destructive semantic must be chosen
+        explicitly via :meth:`update_person`.
+
+        The write is scoped to the group whose API key is in use; email
+        status is untouched (channels are independent).
+
+        Args:
+            person_id: Action Network person UUID
+            status: ``"subscribed"`` or ``"unsubscribed"``
+
+        Returns:
+            Updated person resource
+        """
+        result = self._request(
+            "PUT",
+            f"/people/{person_id}",
+            json_body={"phone_numbers": [{"status": status}]},
+        )
+        return result or {}
+
     # -- Tags -----------------------------------------------------------------
 
     @retry_action_network_operation

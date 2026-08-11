@@ -1,6 +1,6 @@
 # CCEF Connections
 
-A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zoom, Action Network, Action Builder, Asana, Protect the Vote (PTV), ROI CRM, Geocodio, GitHub, Hex, and Resend (transactional email) with Civis credential compatibility.
+A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zoom, Action Network, Action Builder, Asana, Protect the Vote (PTV), ROI CRM, Geocodio, GitHub, Hex, Resend (transactional email), and Tatango (SMS) with Civis credential compatibility.
 
 ## Features
 
@@ -19,6 +19,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 - **GitHub**: File-write access to a repository via the REST contents API — idempotent commits suitable for "data sync -> JSON file -> GitHub Pages" patterns
 - **Hex**: Notebook/dashboard platform API — projects, full cell CRUD, and run triggering; the transport layer under the `hex-toolkit` library
 - **Email (Resend)**: Transactional email — magic-links, notifications — via Resend's HTTP API
+- **Tatango**: SMS broadcast platform (Messaging API v2) — subscribers with opt-in bypass flags, per-list custom fields, and webhook registrations
 - **Unified Credentials**: `{CREDENTIAL_NAME}_PASSWORD` pattern for Civis compatibility
 - **Automatic Retry**: Built-in exponential backoff for all APIs
 - **Configuration as Code**: Manage settings via Google Sheets
@@ -28,7 +29,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 Dependencies are split by connector. The base install is lightweight
 (`requests`, `tenacity`, `python-dotenv`) and covers core plus all REST
 connectors: Action Builder, Action Network, Asana, Email (Resend), Geocodio,
-GitHub, HelpScout, Hex, PTV, ROI CRM, and Zoom. Heavier connectors are opt-in via extras:
+GitHub, HelpScout, Hex, PTV, ROI CRM, Tatango, and Zoom. Heavier connectors are opt-in via extras:
 
 | Extra | Enables | Pulls in |
 |---|---|---|
@@ -90,6 +91,8 @@ GEOCODIO_API_KEY_PASSWORD=your-geocodio-api-key
 GITHUB_PAT_PASSWORD=ghp_XXXXXXXXXXXXXXXX
 HEX_API_KEY_PASSWORD=your-hex-personal-access-token
 RESEND_API_KEY_PASSWORD=re_XXXXXXXXXXXXXXXX
+TATANGO_LOGIN_EMAIL_PASSWORD=api-user@yourorg.org
+TATANGO_API_KEY_PASSWORD=your-tatango-api-key
 RESEND_FROM_EMAIL=Your Name <auth@mail.commoncause.org>  # optional default sender
 ```
 
@@ -570,6 +573,44 @@ with EmailConnector() as email:
 shared sending domain). Provide at least one of `html=` or `text=`. On a persistent
 rate limit (429), `send()` retries with exponential backoff before raising `RateLimitError`.
 
+### Tatango Example
+
+```python
+from ccef_connections import TatangoConnector
+
+# Reads TATANGO_LOGIN_EMAIL_PASSWORD + TATANGO_API_KEY_PASSWORD (HTTP Basic).
+# All operations are per-list; set the list once here or pass list_id per call.
+with TatangoConnector(default_list_id="123456") as tatango:
+    # Add a subscriber. Without bypass flags this is DOUBLE opt-in (Tatango
+    # texts a confirmation the person must answer YES to). With both flags
+    # it is silent and immediately subscribed; with bypass_opt_in_response
+    # False the list's welcome/response message is still sent.
+    result = tatango.add_subscriber(
+        "3125550123",                      # bare 10-digit, no country code
+        first_name="Jane",
+        custom_fields={"membership_status": "Active"},
+        bypass_opt_in_process=True,
+        bypass_opt_in_response=True,
+    )
+    # ⚠️ A refused add still returns HTTP 201 — the refusal (e.g. the ~48h
+    # re-subscribe cooldown) lives only in the response's status string.
+    print(result.get("status"))
+
+    # Selective in-place update (omitted fields untouched)
+    tatango.update_subscriber("3125550123", {"membership_status": "Lapsed"})
+
+    # Soft opt-out — fires the unsubscribe webhook (indistinguishable from
+    # an organic STOP) and starts the ~48h re-subscribe cooldown
+    tatango.delete_subscriber("3125550123")
+
+    # Per-list custom-field schema and webhook registrations
+    tatango.create_custom_field("mrc_date", "MRC Date", "datetime")
+    tatango.create_webhook("https://receiver.example.org/tt?secret=...")
+```
+
+**Pacing:** Tatango's rate-limit tier is unpublished; the connector spaces requests
+`min_request_interval` seconds apart (default 3.0 — the live-tested-safe rate).
+
 ### Configuration Management Example
 
 ```python
@@ -659,6 +700,7 @@ All credentials follow the `{CREDENTIAL_NAME}_PASSWORD` naming convention:
 - `GITHUB_PAT_PASSWORD` — Personal Access Token string (default name). Override with `GitHubConnector(credential_name="...")` to use per-repo tokens like `DYNAMIC_ACTION_MAP_GITHUB_PAT_PASSWORD`.
 - `HEX_API_KEY_PASSWORD` — Personal Access Token string (workspace admin must have API access enabled; tokens created under user settings → API keys)
 - `RESEND_API_KEY_PASSWORD` — API key string (plus optional `RESEND_FROM_EMAIL` for a default sender — not a `_PASSWORD` credential, just a plain env var)
+- `TATANGO_LOGIN_EMAIL_PASSWORD` + `TATANGO_API_KEY_PASSWORD` — Tatango authenticates with HTTP Basic as `login email : API key`, so both ride as credentials (the email isn't secret, but Civis carries it the same way)
 
 This pattern is compatible with Civis Docker environments while also working seamlessly in local development with `.env` files.
 
@@ -680,6 +722,7 @@ All connectors include automatic retry with exponential backoff:
 - **Geocodio**: 5 retries on 429 rate limit only; other HTTP errors surface immediately
 - **Hex**: 3 retries with backoff on read calls (60 req/min limit); writes (create/update/delete cell) run single-shot — a retried POST could duplicate a cell
 - **Email (Resend)**: 5 retries on 429 rate limit only; other HTTP errors surface immediately
+- **Tatango**: 5 retries on 429 rate limit only; other HTTP errors (including WAF 403 body blocks) surface immediately. The connector also paces itself client-side (`min_request_interval`, default 3.0s) since the vendor tier is unpublished — and note business-level refusals arrive inside HTTP **201** bodies, which no retry logic sees
 - **Transient errors**: Automatic retry for network failures
 
 ### Auto-Connect Behavior
@@ -799,6 +842,12 @@ defined over Google Sheets) work as long as the sheet is shared with the service
 - `update_person(person_id, fields)` - Update a person (PUT — sends full replacement of provided fields)
 - `unsubscribe_person(person_id)` - Unsubscribe a person by UUID (sets email status to `"unsubscribed"` via PUT). **Scoped to the API key's group** — does not affect other groups in a federated network.
 - `unsubscribe_person_by_email(email)` - Unsubscribe by email address (no UUID lookup needed). Uses the Person Signup Helper (POST). If the person doesn't exist, they are added in an unsubscribed state.
+
+**Phone / SMS ops** (phones are stored as 11 digits with leading `1`, no `+`; AN effectively holds **one phone per person**):
+
+- `find_people_by_phone(phone_number)` - Exact-match phone lookup via `filter=phone_number eq '...'` (fast and freshly indexed, unlike `modified_date` filters)
+- `get_person_phone(person_id)` - The person's phone entry (`number`, `status`, `number_type`) or `None`
+- `set_person_phone_status(person_id, status)` - Set SMS status `"subscribed"`/`"unsubscribed"` via a **status-only PUT**. Never sends a number — a phone PUT carrying `number` **replaces** the person's phone (live-verified). Email status is untouched; scoped to the API key's group.
 
 **Tags & Taggings:**
 
@@ -1082,6 +1131,39 @@ Sends transactional email (magic-links, notifications) via Resend's HTTP API. No
 **Auth:** Bearer-token API key on every request. Base URL: `https://api.resend.com`. Retries on 429 (rate limit) with exponential backoff; 4xx/5xx surface immediately.
 
 - `send(to, subject, *, html=None, text=None, from_addr=None, reply_to=None)` - Send an email. `to` and `reply_to` accept a single address or a list. `from_addr` falls back to `RESEND_FROM_EMAIL`. Requires at least one of `html`/`text`. Returns Resend's response dict (includes the message `id`). Raises `ValueError` if no sender resolves or no body is given.
+
+### TatangoConnector
+
+SMS broadcast platform (Tatango, now MomoGood), Messaging API v2. Base URL: `https://app.tatango.com/api/v2`. Endpoint shapes were live-verified (tatango-sync project, 2026-06 / 2026-08).
+
+**Credentials:** `TATANGO_LOGIN_EMAIL_PASSWORD` + `TATANGO_API_KEY_PASSWORD` (HTTP Basic: `login email : API key`).
+
+**Constructor:** `TatangoConnector(default_list_id=None, min_request_interval=3.0)` — all operations are per-list; the per-call `list_id` overrides the default. The connector paces requests `min_request_interval` seconds apart (vendor rate tier unpublished; 1 req/3s is the tested-safe rate).
+
+**Important concepts:**
+
+- **The `status` string is the outcome, not the HTTP code.** A *refused* subscriber add (e.g. the ~48h post-opt-out re-subscribe cooldown) still returns HTTP **201** — inspect the response's `status`, or re-GET the subscriber and check `optin_in_progress`.
+- **Double opt-in is the API default** even on single-opt-in lists. `bypass_opt_in_process=True` skips it; pair with `bypass_opt_in_response=True` for a fully silent add, or `False` to also send the list's welcome/response message.
+- **`delete_subscriber` is a soft opt-out** (record retained, `opted_out_at` set) and **fires the `unsubscribe` webhook** with a payload indistinguishable from an organic STOP — callers doing bidirectional sync need echo suppression (self-write ledger).
+- **Timestamps** come back with inconsistent (but instant-preserving) UTC offsets — parse *with* the offset, never strip it.
+- Phones are **bare 10-digit** (no country code) throughout.
+
+**Subscribers:**
+
+- `get_subscriber(phone_number, list_id=None)` - Read a subscriber (soft-opted-out records still return 200)
+- `add_subscriber(phone_number, first_name=None, last_name=None, email=None, zip_code=None, custom_fields=None, bypass_opt_in_process=False, bypass_opt_in_response=False, list_id=None, **extra_fields)` - Opt in a subscriber; custom-field values ride as flat keys and are coerced to the field's declared type
+- `update_subscriber(phone_number, fields, list_id=None)` - Selective in-place PUT (omitted fields untouched; tags are additive; datetime fields accept plain ISO dates)
+- `delete_subscriber(phone_number, list_id=None)` - Soft opt-out (see above; starts the ~48h re-subscribe cooldown)
+- `list_subscribers(list_id=None, **params)` - Single page, raw response (pagination shape not live-verified)
+
+**Custom fields & webhooks (per-list):**
+
+- `list_custom_fields(list_id=None)` / `create_custom_field(key, label, content_type, max_length=100, list_id=None)` - Schema CRUD. Create path is **plural** `/custom_fields` (documented singular path 404s) and `max_length` is **required** (422 without it). `content_type`: `text` / `datetime` / `number`
+- `list_webhooks(list_id=None)` / `create_webhook(callback_url, subscribe=True, unsubscribe=True, message_sent=False, cleaned=True, reply_received=False, list_id=None)` / `delete_webhook(webhook_id, list_id=None)` - All five events settable via API. No HMAC signing (trust = URL secret + IP allowlist); duplicate delivery happens even on success — dedupe on `opt_id`
+
+**Lists:**
+
+- `list_lists(**params)` / `get_list(list_id=None)` - List config; useful fields `opt_in_type` (`single`/`double`) and `counts`
 
 ### ConfigManager
 

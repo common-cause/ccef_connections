@@ -427,6 +427,37 @@ def retry_email_operation(func: Callable) -> Callable:
     )(func)
 
 
+def retry_tatango_operation(func: Callable) -> Callable:
+    """
+    Decorator for Tatango (MomoGood) Messaging v2 operations with retry logic.
+
+    Tatango's rate-limit tier is unpublished (live-tested clean at
+    1 request / 3 s — the connector also paces itself to that rate
+    client-side). Only retries on RateLimitError: business-level refusals
+    arrive inside HTTP 201 bodies (never exceptions), and real 4xx/5xx —
+    including WAF 403 body blocks — should surface immediately so the
+    caller sees the actual error.
+
+    Args:
+        func: The function to decorate
+
+    Returns:
+        Decorated function with Tatango-specific retry logic
+
+    Examples:
+        >>> @retry_tatango_operation
+        ... def add_subscriber(phone):
+        ...     return connector._request("POST", "/lists/1/subscribers", ...)
+    """
+    return retry(
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=2.0, min=3.0, max=60.0),
+        retry=retry_if_exception_type(RateLimitError),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )(func)
+
+
 def retry_geocodio_operation(func: Callable) -> Callable:
     """
     Decorator for Geocodio API operations with retry logic.

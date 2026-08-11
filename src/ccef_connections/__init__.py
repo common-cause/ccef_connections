@@ -42,9 +42,10 @@ if TYPE_CHECKING:
     from .connectors.roi_crm import ROICRMConnector
     from .connectors.sheets import SheetsConnector
     from .connectors.sheets_writer import SheetsWriterConnector
+    from .connectors.tatango import TatangoConnector
     from .connectors.zoom import ZoomConnector
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 # Lazy attribute -> (module, required extra or None).
 # Connectors with extra=None need only the base install (requests).
@@ -64,6 +65,7 @@ _LAZY_IMPORTS = {
     "ROICRMConnector": ("ccef_connections.connectors.roi_crm", None),
     "SheetsConnector": ("ccef_connections.connectors.sheets", "sheets"),
     "SheetsWriterConnector": ("ccef_connections.connectors.sheets_writer", "sheets"),
+    "TatangoConnector": ("ccef_connections.connectors.tatango", None),
     "ZoomConnector": ("ccef_connections.connectors.zoom", None),
     # ConfigManager reads config from Google Sheets, so it needs the sheets extra
     "ConfigManager": ("ccef_connections.config", "sheets"),
@@ -86,6 +88,7 @@ __all__ = [
     "ROICRMConnector",
     "SheetsConnector",
     "SheetsWriterConnector",
+    "TatangoConnector",
     "ZoomConnector",
     # Configuration
     "ConfigManager",
