@@ -1,10 +1,16 @@
 """
 Asana connector for CCEF connections library.
 
-Provides read-only access to the Asana REST API v1.0: tasks (including
-custom fields), projects, sections, and workspaces. Built for snapshot-sync
-jobs (e.g. nightly Asana -> BigQuery pulls) that list every task in a
-project and flatten it downstream.
+Provides access to the Asana REST API v1.0: tasks (including custom
+fields), projects, sections, and workspaces. Reads were built for
+snapshot-sync jobs (e.g. nightly Asana -> BigQuery pulls) that list every
+task in a project and flatten it downstream; task-level writes (create /
+update / complete / comment / move between sections) were added in v0.7.0
+for task-tracking workflows (e.g. the assistant MCP server).
+
+Writes are safe under the retry policy: ``retry_asana_operation`` retries
+only on 429 responses, and a 429 means Asana rejected the request before
+processing it — a retried POST cannot double-create.
 
 Uses a Personal Access Token as a Bearer header. PATs work on all Asana
 plan tiers and inherit the project access of the user they belong to.
@@ -58,16 +64,21 @@ def _iso(value: Union[str, datetime]) -> str:
 
 class AsanaConnector(BaseConnection):
     """
-    Asana connector for read-only task, project, and workspace access.
+    Asana connector for task, project, and workspace access.
 
     Authenticates with a Personal Access Token from the
     ASANA_API_KEY_PASSWORD env var and validates it against
     ``GET /users/me`` on connect. All GIDs are opaque strings.
+    Reads cover workspaces/projects/sections/tasks; writes cover the
+    task level (create, update, complete, comment, move to section)
+    plus section creation.
 
     Examples:
         >>> with AsanaConnector() as asana:
         ...     projects = asana.get_projects(workspace_gid="12345")
         ...     tasks = asana.get_project_tasks(projects[0]["gid"])
+        ...     task = asana.create_task("Ship it", project_gid=projects[0]["gid"])
+        ...     asana.complete_task(task["gid"])
     """
 
     def __init__(self) -> None:
@@ -161,6 +172,7 @@ class AsanaConnector(BaseConnection):
         method: str,
         path: str,
         params: Optional[Dict[str, Any]] = None,
+        json_body: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Central HTTP method with auth session and standard error mapping.
@@ -169,9 +181,11 @@ class AsanaConnector(BaseConnection):
         ``next_page`` on paginated endpoints) — callers unwrap ``data``.
 
         Args:
-            method: HTTP method (GET for this read-only connector)
+            method: HTTP method (GET / POST / PUT)
             path: API path relative to /api/1.0 (e.g. '/workspaces')
             params: Query parameters
+            json_body: JSON request body for writes; callers pass the full
+                Asana envelope (``{"data": {...}}``)
 
         Returns:
             Parsed JSON response body
@@ -192,7 +206,9 @@ class AsanaConnector(BaseConnection):
         url = f"{ASANA_API_BASE}{path}"
 
         try:
-            resp = session.request(method, url, params=params, timeout=30)
+            resp = session.request(
+                method, url, params=params, json=json_body, timeout=30
+            )
         except requests.RequestException as e:
             raise ConnectionError(f"Asana API request failed: {e}") from e
 
@@ -418,6 +434,236 @@ class AsanaConnector(BaseConnection):
         return self._paginate(
             f"/tasks/{task_gid}/subtasks", params={"opt_fields": opt_fields}
         )
+
+    # -- Writes -------------------------------------------------------------
+    #
+    # Safe to decorate with @retry_asana_operation: it retries only on 429,
+    # which Asana raises *instead of* processing the request — a retried
+    # POST cannot double-create. Non-429 failures surface immediately.
+
+    @retry_asana_operation
+    def create_task(
+        self,
+        name: str,
+        project_gid: Optional[str] = None,
+        section_gid: Optional[str] = None,
+        workspace_gid: Optional[str] = None,
+        parent_gid: Optional[str] = None,
+        notes: Optional[str] = None,
+        due_on: Optional[str] = None,
+        assignee: Optional[str] = None,
+        extra_fields: Optional[Dict[str, Any]] = None,
+        opt_fields: str = DEFAULT_TASK_FIELDS,
+    ) -> Dict[str, Any]:
+        """
+        Create a task. Requires a home: project, parent task, or workspace.
+
+        Args:
+            name: Task title
+            project_gid: Project to add the task to
+            section_gid: Section within project_gid (requires project_gid)
+            workspace_gid: Workspace, for tasks homed outside any project
+            parent_gid: Parent task, to create a subtask
+            notes: Plain-text task description
+            due_on: Due date as YYYY-MM-DD
+            assignee: Assignee user GID, or 'me'
+            extra_fields: Additional raw fields merged into the request data
+                (e.g. {'custom_fields': {...}, 'due_at': ...}) — applied
+                last, so they can override the named arguments
+            opt_fields: Fields to include in the returned task
+                (default: DEFAULT_TASK_FIELDS)
+
+        Returns:
+            The created task resource
+
+        Raises:
+            ValueError: If no project/parent/workspace is given, or if
+                section_gid is given without project_gid
+        """
+        if not (project_gid or parent_gid or workspace_gid):
+            raise ValueError(
+                "create_task requires project_gid, parent_gid, or workspace_gid"
+            )
+        if section_gid and not project_gid:
+            raise ValueError("section_gid requires project_gid")
+
+        data: Dict[str, Any] = {"name": name}
+        if project_gid:
+            data["projects"] = [project_gid]
+        if section_gid:
+            data["memberships"] = [
+                {"project": project_gid, "section": section_gid}
+            ]
+        if workspace_gid:
+            data["workspace"] = workspace_gid
+        if parent_gid:
+            data["parent"] = parent_gid
+        if notes is not None:
+            data["notes"] = notes
+        if due_on is not None:
+            data["due_on"] = due_on
+        if assignee is not None:
+            data["assignee"] = assignee
+        if extra_fields:
+            data.update(extra_fields)
+
+        body = self._request(
+            "POST",
+            "/tasks",
+            params={"opt_fields": opt_fields},
+            json_body={"data": data},
+        )
+        return body.get("data") or {}
+
+    @retry_asana_operation
+    def update_task(
+        self,
+        task_gid: str,
+        name: Optional[str] = None,
+        notes: Optional[str] = None,
+        due_on: Optional[str] = None,
+        assignee: Optional[str] = None,
+        completed: Optional[bool] = None,
+        extra_fields: Optional[Dict[str, Any]] = None,
+        opt_fields: str = DEFAULT_TASK_FIELDS,
+    ) -> Dict[str, Any]:
+        """
+        Update a task. Only the arguments provided are sent to Asana.
+
+        None means "leave unchanged". To explicitly clear a field, pass it
+        through extra_fields with a null value (e.g.
+        ``extra_fields={'due_on': None}``).
+
+        Args:
+            task_gid: Task GID
+            name: New task title
+            notes: New plain-text description
+            due_on: New due date as YYYY-MM-DD
+            assignee: New assignee user GID, or 'me'
+            completed: Mark the task complete (True) or incomplete (False)
+            extra_fields: Additional raw fields merged into the request data
+                — applied last, so they can override the named arguments
+            opt_fields: Fields to include in the returned task
+                (default: DEFAULT_TASK_FIELDS)
+
+        Returns:
+            The updated task resource
+
+        Raises:
+            ValueError: If no field to update was provided
+        """
+        data: Dict[str, Any] = {}
+        if name is not None:
+            data["name"] = name
+        if notes is not None:
+            data["notes"] = notes
+        if due_on is not None:
+            data["due_on"] = due_on
+        if assignee is not None:
+            data["assignee"] = assignee
+        if completed is not None:
+            data["completed"] = completed
+        if extra_fields:
+            data.update(extra_fields)
+        if not data:
+            raise ValueError("update_task called with no fields to update")
+
+        body = self._request(
+            "PUT",
+            f"/tasks/{task_gid}",
+            params={"opt_fields": opt_fields},
+            json_body={"data": data},
+        )
+        return body.get("data") or {}
+
+    def complete_task(self, task_gid: str) -> Dict[str, Any]:
+        """
+        Mark a task complete. Sugar for update_task(completed=True).
+
+        Args:
+            task_gid: Task GID
+
+        Returns:
+            The updated task resource
+        """
+        return self.update_task(task_gid, completed=True)
+
+    @retry_asana_operation
+    def add_comment(self, task_gid: str, text: str) -> Dict[str, Any]:
+        """
+        Add a plain-text comment (story) to a task.
+
+        Args:
+            task_gid: Task GID
+            text: Comment text
+
+        Returns:
+            The created story resource
+        """
+        body = self._request(
+            "POST",
+            f"/tasks/{task_gid}/stories",
+            json_body={"data": {"text": text}},
+        )
+        return body.get("data") or {}
+
+    @retry_asana_operation
+    def move_task_to_section(
+        self, task_gid: str, section_gid: str
+    ) -> Dict[str, Any]:
+        """
+        Move a task to a section (Kanban column) within the section's project.
+
+        The task must already belong to the section's project. Idempotent —
+        moving a task to a section it is already in is a no-op.
+
+        Args:
+            task_gid: Task GID
+            section_gid: Destination section GID
+
+        Returns:
+            Empty dict (Asana returns an empty data object)
+        """
+        body = self._request(
+            "POST",
+            f"/sections/{section_gid}/addTask",
+            json_body={"data": {"task": task_gid}},
+        )
+        return body.get("data") or {}
+
+    @retry_asana_operation
+    def delete_task(self, task_gid: str) -> Dict[str, Any]:
+        """
+        Delete a task. Deleted tasks go to Asana's trash (recoverable in the
+        UI for 30 days).
+
+        Args:
+            task_gid: Task GID
+
+        Returns:
+            Empty dict (Asana returns an empty data object)
+        """
+        body = self._request("DELETE", f"/tasks/{task_gid}")
+        return body.get("data") or {}
+
+    @retry_asana_operation
+    def create_section(self, project_gid: str, name: str) -> Dict[str, Any]:
+        """
+        Create a section (Kanban column) in a project.
+
+        Args:
+            project_gid: Project GID
+            name: Section name
+
+        Returns:
+            The created section resource
+        """
+        body = self._request(
+            "POST",
+            f"/projects/{project_gid}/sections",
+            json_body={"data": {"name": name}},
+        )
+        return body.get("data") or {}
 
 
 def _parse_retry_after(headers: Any) -> int:

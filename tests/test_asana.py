@@ -542,6 +542,234 @@ class TestGetSubtasks:
         assert args.kwargs["params"]["opt_fields"] == DEFAULT_TASK_FIELDS
 
 
+# ── Writes ─────────────────────────────────────────────────────────────
+
+
+class TestCreateTask:
+    def test_creates_task_in_project(self, connected):
+        connected._session.request.return_value = _make_response(
+            200, {"data": {"gid": "t9", "name": "Ship it"}}
+        )
+
+        result = connected.create_task("Ship it", project_gid="p1")
+
+        assert result == {"gid": "t9", "name": "Ship it"}
+        args = connected._session.request.call_args
+        assert args[0][0] == "POST"
+        assert args[0][1] == f"{ASANA_API_BASE}/tasks"
+        assert args.kwargs["json"] == {
+            "data": {"name": "Ship it", "projects": ["p1"]}
+        }
+        assert args.kwargs["params"] == {"opt_fields": DEFAULT_TASK_FIELDS}
+
+    def test_optional_fields_included_only_when_given(self, connected):
+        connected._session.request.return_value = _make_response(
+            200, {"data": {"gid": "t9"}}
+        )
+
+        connected.create_task(
+            "Ship it",
+            project_gid="p1",
+            notes="Details",
+            due_on="2026-08-15",
+            assignee="me",
+        )
+
+        data = connected._session.request.call_args.kwargs["json"]["data"]
+        assert data["notes"] == "Details"
+        assert data["due_on"] == "2026-08-15"
+        assert data["assignee"] == "me"
+        assert "workspace" not in data
+        assert "parent" not in data
+        assert "memberships" not in data
+
+    def test_section_builds_membership(self, connected):
+        connected._session.request.return_value = _make_response(
+            200, {"data": {"gid": "t9"}}
+        )
+
+        connected.create_task("Ship it", project_gid="p1", section_gid="s1")
+
+        data = connected._session.request.call_args.kwargs["json"]["data"]
+        assert data["memberships"] == [{"project": "p1", "section": "s1"}]
+        assert data["projects"] == ["p1"]
+
+    def test_subtask_via_parent(self, connected):
+        connected._session.request.return_value = _make_response(
+            200, {"data": {"gid": "t9"}}
+        )
+
+        connected.create_task("Child", parent_gid="t1")
+
+        data = connected._session.request.call_args.kwargs["json"]["data"]
+        assert data["parent"] == "t1"
+        assert "projects" not in data
+
+    def test_extra_fields_merge_last(self, connected):
+        connected._session.request.return_value = _make_response(
+            200, {"data": {"gid": "t9"}}
+        )
+
+        connected.create_task(
+            "Ship it",
+            project_gid="p1",
+            extra_fields={"custom_fields": {"cf1": "high"}, "name": "Override"},
+        )
+
+        data = connected._session.request.call_args.kwargs["json"]["data"]
+        assert data["custom_fields"] == {"cf1": "high"}
+        assert data["name"] == "Override"
+
+    def test_requires_a_home(self, connected):
+        with pytest.raises(ValueError, match="project_gid, parent_gid, or workspace_gid"):
+            connected.create_task("Orphan")
+        connected._session.request.assert_not_called()
+
+    def test_section_requires_project(self, connected):
+        with pytest.raises(ValueError, match="section_gid requires project_gid"):
+            connected.create_task("Ship it", section_gid="s1", workspace_gid="w1")
+        connected._session.request.assert_not_called()
+
+
+class TestUpdateTask:
+    def test_sends_only_provided_fields(self, connected):
+        connected._session.request.return_value = _make_response(
+            200, {"data": {"gid": "t1", "due_on": "2026-08-20"}}
+        )
+
+        result = connected.update_task("t1", due_on="2026-08-20")
+
+        assert result["due_on"] == "2026-08-20"
+        args = connected._session.request.call_args
+        assert args[0][0] == "PUT"
+        assert args[0][1] == f"{ASANA_API_BASE}/tasks/t1"
+        assert args.kwargs["json"] == {"data": {"due_on": "2026-08-20"}}
+
+    def test_completed_false_is_sent(self, connected):
+        connected._session.request.return_value = _make_response(
+            200, {"data": {"gid": "t1"}}
+        )
+
+        connected.update_task("t1", completed=False)
+
+        assert connected._session.request.call_args.kwargs["json"] == {
+            "data": {"completed": False}
+        }
+
+    def test_extra_fields_allow_explicit_null(self, connected):
+        connected._session.request.return_value = _make_response(
+            200, {"data": {"gid": "t1"}}
+        )
+
+        connected.update_task("t1", extra_fields={"due_on": None})
+
+        assert connected._session.request.call_args.kwargs["json"] == {
+            "data": {"due_on": None}
+        }
+
+    def test_no_fields_raises(self, connected):
+        with pytest.raises(ValueError, match="no fields to update"):
+            connected.update_task("t1")
+        connected._session.request.assert_not_called()
+
+
+class TestCompleteTask:
+    def test_delegates_to_update_task(self, connected):
+        connected._session.request.return_value = _make_response(
+            200, {"data": {"gid": "t1", "completed": True}}
+        )
+
+        result = connected.complete_task("t1")
+
+        assert result["completed"] is True
+        args = connected._session.request.call_args
+        assert args[0][0] == "PUT"
+        assert args[0][1] == f"{ASANA_API_BASE}/tasks/t1"
+        assert args.kwargs["json"] == {"data": {"completed": True}}
+
+
+class TestAddComment:
+    def test_posts_story(self, connected):
+        connected._session.request.return_value = _make_response(
+            200, {"data": {"gid": "story1", "text": "Done via assistant"}}
+        )
+
+        result = connected.add_comment("t1", "Done via assistant")
+
+        assert result["gid"] == "story1"
+        args = connected._session.request.call_args
+        assert args[0][0] == "POST"
+        assert args[0][1] == f"{ASANA_API_BASE}/tasks/t1/stories"
+        assert args.kwargs["json"] == {"data": {"text": "Done via assistant"}}
+
+
+class TestMoveTaskToSection:
+    def test_posts_add_task(self, connected):
+        connected._session.request.return_value = _make_response(200, {"data": {}})
+
+        result = connected.move_task_to_section("t1", section_gid="s2")
+
+        assert result == {}
+        args = connected._session.request.call_args
+        assert args[0][0] == "POST"
+        assert args[0][1] == f"{ASANA_API_BASE}/sections/s2/addTask"
+        assert args.kwargs["json"] == {"data": {"task": "t1"}}
+
+
+class TestDeleteTask:
+    def test_deletes_task(self, connected):
+        connected._session.request.return_value = _make_response(200, {"data": {}})
+
+        result = connected.delete_task("t1")
+
+        assert result == {}
+        args = connected._session.request.call_args
+        assert args[0][0] == "DELETE"
+        assert args[0][1] == f"{ASANA_API_BASE}/tasks/t1"
+
+
+class TestCreateSection:
+    def test_posts_section(self, connected):
+        connected._session.request.return_value = _make_response(
+            200, {"data": {"gid": "s9", "name": "Waiting"}}
+        )
+
+        result = connected.create_section("p1", "Waiting")
+
+        assert result == {"gid": "s9", "name": "Waiting"}
+        args = connected._session.request.call_args
+        assert args[0][0] == "POST"
+        assert args[0][1] == f"{ASANA_API_BASE}/projects/p1/sections"
+        assert args.kwargs["json"] == {"data": {"name": "Waiting"}}
+
+
+class TestWriteErrorMapping:
+    def test_write_402_surfaces_immediately(self, connected):
+        connected._session.request.return_value = _make_response(
+            402, json_data={"errors": [{"message": "Payment Required"}]}
+        )
+
+        with pytest.raises(ConnectionError, match="paid-tier"):
+            connected.create_task("Ship it", project_gid="p1")
+
+        assert connected._session.request.call_count == 1
+
+    @patch("tenacity.nap.time.sleep")
+    def test_write_429_then_success_retries(self, mock_sleep, connected):
+        # A 429 means Asana rejected the request before processing it, so
+        # retrying a POST cannot double-create.
+        connected._session.request.side_effect = [
+            _make_response(429, headers={"Retry-After": "7"}),
+            _make_response(200, {"data": {"gid": "t9"}}),
+        ]
+
+        result = connected.create_task("Ship it", project_gid="p1")
+
+        assert result == {"gid": "t9"}
+        assert connected._session.request.call_count == 2
+        mock_sleep.assert_called_once_with(9.0)
+
+
 # ── Retry behavior ─────────────────────────────────────────────────────
 
 
@@ -556,6 +784,12 @@ class TestRetry:
             "get_project_tasks",
             "get_task",
             "get_subtasks",
+            "create_task",
+            "update_task",
+            "add_comment",
+            "move_task_to_section",
+            "delete_task",
+            "create_section",
         ],
     )
     def test_public_methods_have_retry_decorator(self, method):

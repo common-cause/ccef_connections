@@ -12,7 +12,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 - **Zoom**: Meeting and webinar attendee retrieval — participants, registrants, absentees
 - **Action Network**: Full CRM access — people, tags, events, petitions, forms, fundraising, messages, and more
 - **Action Builder**: Field organizing and relationship mapping — campaigns, people/entities, tags, taggings, and connections
-- **Asana**: Read-only project and task access — tasks with custom fields, projects, sections, and workspaces, built for snapshot syncs
+- **Asana**: Project and task access — reads (tasks with custom fields, projects, sections, workspaces, built for snapshot syncs) plus task-level writes (create/update/complete/comment/move to section)
 - **Protect the Vote (PTV)**: Election protection shift data — volunteer signups, registered volunteers, and shift availability across all states
 - **ROI CRM**: Fundraising CRM — donors, donations, pledges, memberships, payment tokens, orders, contact info, and code tables
 - **Geocodio**: Address geocoding — forward, reverse, and batch (up to 10,000 per request) for US, Canada, and Mexico
@@ -943,7 +943,7 @@ Action Builder is a relationship-mapping and field organizing platform. All reso
 
 ### AsanaConnector
 
-Provides read-only access to Asana tasks (including custom fields), projects, sections, and workspaces — built for snapshot-sync jobs that pull whole projects into a warehouse.
+Provides access to Asana tasks (including custom fields), projects, sections, and workspaces. Reads were built for snapshot-sync jobs that pull whole projects into a warehouse; task-level writes (v0.7.0) support task-tracking workflows.
 
 **Credential:** `ASANA_API_KEY_PASSWORD` (Personal Access Token string). PATs work on all Asana plan tiers, are tied to a human user account, and inherit that user's project access. `connect()` validates the token via `GET /users/me`.
 
@@ -956,10 +956,18 @@ Provides read-only access to Asana tasks (including custom fields), projects, se
 - `get_project_tasks(project_gid, opt_fields=DEFAULT_TASK_FIELDS, modified_since=None, completed_since=None)` - The workhorse: list every task in a project with full fields; datetime filters accept ISO-8601 strings or `datetime` objects
 - `get_task(task_gid, opt_fields=DEFAULT_TASK_FIELDS)` - Get a single task
 - `get_subtasks(task_gid, opt_fields=DEFAULT_TASK_FIELDS)` - List a task's subtasks
+- `create_task(name, project_gid=None, section_gid=None, workspace_gid=None, parent_gid=None, notes=None, due_on=None, assignee=None, extra_fields=None, opt_fields=DEFAULT_TASK_FIELDS)` - Create a task; requires a home (project, parent task, or workspace); `section_gid` places it in a Kanban column via `memberships`; `extra_fields` merges raw API fields (e.g. `custom_fields`) last
+- `update_task(task_gid, name=None, notes=None, due_on=None, assignee=None, completed=None, extra_fields=None, opt_fields=DEFAULT_TASK_FIELDS)` - Update only the fields provided; `None` means "leave unchanged" — clear a field by passing an explicit null through `extra_fields` (e.g. `extra_fields={'due_on': None}`)
+- `complete_task(task_gid)` - Sugar for `update_task(completed=True)`
+- `add_comment(task_gid, text)` - Add a plain-text comment (story) to a task
+- `move_task_to_section(task_gid, section_gid)` - Move a task between sections in a project it already belongs to; idempotent
+- `delete_task(task_gid)` - Delete a task (goes to Asana's trash, recoverable in the UI for 30 days)
+- `create_section(project_gid, name)` - Create a section (Kanban column)
 
 **Important concepts:**
 
 - All GIDs are opaque strings, not ints.
+- Writes retry safely: the retry decorator retries only on 429, which Asana raises *instead of* processing the request — a retried POST cannot double-create. All other write failures surface immediately.
 - Default Asana responses are compact stubs (`gid`/`name`/`resource_type`) — a useful task pull requires `opt_fields`. The module-level `DEFAULT_TASK_FIELDS` constant covers the common sync fields (name, notes, completion, dates, assignee, memberships, tags, custom fields, parent, permalink); override per call with a comma-separated string (dot notation for nested fields, e.g. `assignee.email`).
 - Custom fields requested via `opt_fields=custom_fields` come back as full objects with `gid`, `name`, `type`, type-specific value fields, and `display_value` — a universal string rendering that is the recommended consumption path for syncs.
 - Pagination is handled internally with offset tokens (`limit=100` per page); offset tokens are never persisted across runs.
@@ -1461,4 +1469,4 @@ For issues or questions:
 
 ## Version
 
-Current version: 0.5.0
+Current version: 0.7.0
