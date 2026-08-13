@@ -287,6 +287,70 @@ class BigQueryConnector(BaseConnection):
             logger.error(f"Insert failed: {str(e)}")
             raise WriteError(f"Insert failed: {str(e)}") from e
 
+    def stream_rows(
+        self,
+        table_id: str,
+        rows: List[Dict[str, Any]],
+        timeout: float = 10.0,
+    ) -> None:
+        """
+        Streaming insert with a hard time bound and NO retries.
+
+        The webhook-receiver primitive, deliberately different from
+        :meth:`insert_rows`:
+
+        - **Time-bounded.** An unbounded ``insert_rows_json`` can hang
+          indefinitely; in a receiver that means a wedged request thread.
+          (Render incident, action_network_webhooks 2026-08-07: hung inserts
+          consumed the whole 20-thread pool in ~1 minute of blast traffic and
+          silently stalled all processing.)
+        - **No retry wrapper.** ``insert_rows`` retries 5× with backoff up to
+          60 s, which is minutes of hang inside a synchronous request handler.
+          A receiver whose sender retries on non-2xx (Tatango: 10 retries)
+          should fail fast and let the sender own durability.
+        - **No ``get_table`` round-trip.** Inserts against the table reference
+          string directly, halving the API calls per event.
+
+        Use :meth:`insert_rows` for batch/back-office writes where waiting is
+        fine and transient failures should be absorbed.
+
+        Args:
+            table_id: 'dataset.table' or 'project.dataset.table'
+            rows: List of dicts to insert
+            timeout: Hard deadline in seconds for the insert call
+
+        Raises:
+            WriteError: If the insert fails, times out, or BigQuery returns
+                per-row errors. Callers should surface this as a non-2xx so
+                the sender retries.
+
+        Examples:
+            >>> try:
+            ...     connector.stream_rows('tatango_sync.staging_tt_optout_events', [row])
+            ... except WriteError:
+            ...     return "storage unavailable", 503  # sender will retry
+        """
+        if not self._is_connected or self._client is None:
+            self.connect()
+
+        if self._client is None:
+            raise ConnectionError("Not connected to BigQuery")
+
+        full_table_id = self._get_full_table_id(table_id)
+        try:
+            errors = self._client.insert_rows_json(
+                full_table_id, rows, retry=None, timeout=timeout
+            )
+        except Exception as e:
+            logger.error(f"Streaming insert failed for {table_id}: {str(e)}")
+            raise WriteError(f"Streaming insert failed for {table_id}: {str(e)}") from e
+
+        if errors:
+            logger.error(f"Streaming insert returned errors for {table_id}: {errors}")
+            raise WriteError(f"Streaming insert returned errors for {table_id}: {errors}")
+
+        logger.debug(f"Streamed {len(rows)} rows into {table_id}")
+
     @retry_google_operation
     def load_dataframe(
         self,

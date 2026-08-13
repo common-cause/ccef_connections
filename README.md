@@ -797,7 +797,8 @@ defined over Google Sheets) work as long as the sheet is shared with the service
 - `query(sql, params=None, timeout=None)` - Execute SQL query
 - `query_to_dataframe(sql, params=None)` - Query to pandas DataFrame
 - `table_exists(table_id)` - Check if table exists
-- `insert_rows(table_id, rows)` - Streaming insert
+- `insert_rows(table_id, rows)` - Streaming insert. Retry-wrapped (5× with backoff) — for batch/back-office writes where waiting is fine
+- `stream_rows(table_id, rows, timeout=10.0)` - **Webhook-receiver primitive**: one time-bounded streaming insert, **no retries**, no `get_table` round-trip. Raises `WriteError` fast so a receiver can return non-2xx and let the *sender's* retries own durability. Use this inside request handlers — an unbounded, retry-wrapped insert can wedge a request thread for minutes (2026-08-07 `action_network_webhooks` incident: hung inserts ate the whole thread pool)
 - `load_dataframe(df, table_id, if_exists='append')` - Load DataFrame
 - `execute_dml(sql)` - Execute UPDATE/DELETE statements
 

@@ -477,6 +477,57 @@ class TestInsertRows:
         assert connector_with_project.is_connected()
 
 
+# -- Stream rows (bounded, no-retry receiver primitive) -----------------------
+
+
+class TestStreamRows:
+    def test_stream_rows_success(self, connected_connector):
+        connected_connector._client.insert_rows_json.return_value = []
+
+        rows = [{"phone": "3125550123", "opt_id": 1}]
+        connected_connector.stream_rows("tatango_sync.staging_tt_optout_events", rows)
+
+        # Inserts against the table reference string — no get_table round-trip.
+        connected_connector._client.get_table.assert_not_called()
+        connected_connector._client.insert_rows_json.assert_called_once_with(
+            "my-explicit-project.tatango_sync.staging_tt_optout_events",
+            rows,
+            retry=None,
+            timeout=10.0,
+        )
+
+    def test_stream_rows_honors_custom_timeout(self, connected_connector):
+        connected_connector._client.insert_rows_json.return_value = []
+
+        connected_connector.stream_rows("dataset.t", [{"a": 1}], timeout=2.5)
+
+        assert connected_connector._client.insert_rows_json.call_args.kwargs["timeout"] == 2.5
+
+    def test_stream_rows_row_errors_raise_write_error(self, connected_connector):
+        connected_connector._client.insert_rows_json.return_value = [
+            {"index": 0, "errors": [{"reason": "invalid", "message": "bad data"}]}
+        ]
+
+        with pytest.raises(WriteError, match="returned errors"):
+            connected_connector.stream_rows("dataset.t", [{"a": 1}])
+
+    def test_stream_rows_exception_raises_write_error(self, connected_connector):
+        connected_connector._client.insert_rows_json.side_effect = Exception("timeout")
+
+        with pytest.raises(WriteError, match="Streaming insert failed"):
+            connected_connector.stream_rows("dataset.t", [{"a": 1}])
+
+    def test_stream_rows_does_not_retry(self, connected_connector):
+        """A receiver must fail fast — the sender's retries are the durability
+        mechanism. insert_rows (retry-wrapped) would hang for minutes here."""
+        connected_connector._client.insert_rows_json.side_effect = Exception("boom")
+
+        with pytest.raises(WriteError):
+            connected_connector.stream_rows("dataset.t", [{"a": 1}])
+
+        assert connected_connector._client.insert_rows_json.call_count == 1
+
+
 # -- Load DataFrame -----------------------------------------------------------
 
 
