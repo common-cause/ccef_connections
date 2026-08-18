@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from .connectors.roi_crm import ROICRMConnector
     from .connectors.sheets import SheetsConnector
     from .connectors.sheets_writer import SheetsWriterConnector
+    from .connectors.stripe import StripeConnector
     from .connectors.tatango import TatangoConnector
     from .connectors.zoom import ZoomConnector
 
@@ -65,6 +66,7 @@ _LAZY_IMPORTS = {
     "ROICRMConnector": ("ccef_connections.connectors.roi_crm", None),
     "SheetsConnector": ("ccef_connections.connectors.sheets", "sheets"),
     "SheetsWriterConnector": ("ccef_connections.connectors.sheets_writer", "sheets"),
+    "StripeConnector": ("ccef_connections.connectors.stripe", None),
     "TatangoConnector": ("ccef_connections.connectors.tatango", None),
     "ZoomConnector": ("ccef_connections.connectors.zoom", None),
     # ConfigManager reads config from Google Sheets, so it needs the sheets extra
@@ -88,6 +90,7 @@ __all__ = [
     "ROICRMConnector",
     "SheetsConnector",
     "SheetsWriterConnector",
+    "StripeConnector",
     "TatangoConnector",
     "ZoomConnector",
     # Configuration

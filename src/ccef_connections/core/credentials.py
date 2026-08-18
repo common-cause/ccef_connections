@@ -355,6 +355,78 @@ class CredentialManager:
             )
         return creds
 
+    def get_stripe_credentials(self) -> Dict[str, str]:
+        """
+        Get Stripe API keys, as a map of account name -> key.
+
+        A Stripe key is scoped to one account, and CCEF runs several side by side
+        (C3/Action Network, C4 main, the online stores). So the credential is a
+        JSON object naming each one::
+
+            STRIPE_CREDENTIALS_PASSWORD={"c3":"rk_live_...","c4":"rk_live_..."}
+
+        A single bare key is also accepted and registered under "default", so a
+        project that only ever touches one account needs no JSON.
+
+        Returns:
+            Dict of account name -> API key
+
+        Raises:
+            CredentialError: If the credential is missing, is JSON but not a
+                non-empty object, or holds a value that does not look like a
+                Stripe key
+
+        Examples:
+            >>> manager = CredentialManager()
+            >>> sorted(manager.get_stripe_credentials())
+            ['c3', 'c4']
+        """
+        raw = self.get_credential("STRIPE_CREDENTIALS")
+        if not isinstance(raw, str):
+            raise CredentialError("STRIPE_CREDENTIALS_PASSWORD must be a string")
+
+        text = raw.strip()
+        if text.startswith("{"):
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError as e:
+                raise CredentialError(
+                    f"Failed to parse STRIPE_CREDENTIALS_PASSWORD as JSON: {e}\n"
+                    f'Expected {{"c3":"rk_live_...","c4":"rk_live_..."}} '
+                    f"or a single bare key."
+                ) from e
+            if not isinstance(parsed, dict) or not parsed:
+                raise CredentialError(
+                    "STRIPE_CREDENTIALS_PASSWORD must be a non-empty JSON object "
+                    "of account name -> API key"
+                )
+            keys = {str(k): str(v).strip() for k, v in parsed.items()}
+        else:
+            keys = {"default": text}
+
+        # ⚠ The shape is validated here because the failure it catches is
+        # otherwise invisible: a key truncated on copy/paste is rejected by
+        # Stripe with the same 401 as a revoked one, and nothing points at the
+        # paste. Stripe's keys run well past 100 characters.
+        for name, key in keys.items():
+            if not key:
+                raise CredentialError(
+                    f"STRIPE_CREDENTIALS_PASSWORD: account {name!r} has an empty key"
+                )
+            if not key.startswith(("sk_live_", "sk_test_", "rk_live_", "rk_test_")):
+                raise CredentialError(
+                    f"STRIPE_CREDENTIALS_PASSWORD: account {name!r} does not look "
+                    f"like a Stripe secret or restricted key (expected an "
+                    f"sk_live_/sk_test_/rk_live_/rk_test_ prefix)"
+                )
+            if len(key) < 80:
+                raise CredentialError(
+                    f"STRIPE_CREDENTIALS_PASSWORD: account {name!r} is only "
+                    f"{len(key)} characters, which is short for a Stripe key — it "
+                    f"was most likely truncated when copied. Re-copy it in full "
+                    f"from the Stripe dashboard."
+                )
+        return keys
     def get_tatango_credentials(self) -> Dict[str, str]:
         """
         Get Tatango (MomoGood) Messaging API v2 credentials.

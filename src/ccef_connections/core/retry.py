@@ -273,6 +273,48 @@ def retry_roi_crm_operation(func: Callable) -> Callable:
     )(func)
 
 
+def _wait_for_stripe_rate_limit(retry_state) -> float:
+    """Wait as long as Stripe asks (Retry-After), plus a 1s buffer."""
+    exc = retry_state.outcome.exception()
+    if isinstance(exc, RateLimitError) and exc.retry_after:
+        return float(exc.retry_after) + 1.0
+    return 2.0
+
+
+def retry_stripe_operation(func: Callable) -> Callable:
+    """
+    Decorator for Stripe API operations with retry logic.
+
+    Stripe allows roughly 100 read requests/second in live mode and returns 429
+    on breach, usually with a Retry-After header. Only RateLimitError is retried —
+    it is the sole transient condition. AuthenticationError (401, and 403 for a
+    missing restricted-key scope) and ConnectionError must fail immediately: a
+    missing key permission is fixed in the Stripe dashboard, and retrying it just
+    delays the message that says so.
+
+    Waits as long as Stripe requests rather than using pure exponential backoff,
+    so a long rate-limit window does not exhaust every attempt first.
+
+    Args:
+        func: The function to decorate
+
+    Returns:
+        Decorated function with Stripe-specific retry logic
+
+    Examples:
+        >>> @retry_stripe_operation
+        ... def list_charges(**params):
+        ...     return client.get("/charges", params=params)
+    """
+    return retry(
+        stop=stop_after_attempt(5),
+        wait=_wait_for_stripe_rate_limit,
+        retry=retry_if_exception_type(RateLimitError),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )(func)
+
+
 def _wait_for_ab_rate_limit(retry_state) -> float:
     """Wait the duration specified in the RateLimitError, plus a 2s buffer."""
     exc = retry_state.outcome.exception()

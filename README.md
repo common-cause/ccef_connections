@@ -1,6 +1,6 @@
 # CCEF Connections
 
-A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zoom, Action Network, Action Builder, Asana, Protect the Vote (PTV), ROI CRM, Geocodio, GitHub, Hex, Resend (transactional email), and Tatango (SMS) with Civis credential compatibility.
+A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zoom, Action Network, Action Builder, Asana, Protect the Vote (PTV), ROI CRM, Geocodio, GitHub, Hex, Resend (transactional email), Tatango (SMS), and Stripe with Civis credential compatibility.
 
 ## Features
 
@@ -19,6 +19,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 - **GitHub**: File-write access to a repository via the REST contents API — idempotent commits suitable for "data sync -> JSON file -> GitHub Pages" patterns
 - **Hex**: Notebook/dashboard platform API — projects, full cell CRUD, and run triggering; the transport layer under the `hex-toolkit` library
 - **Email (Resend)**: Transactional email — magic-links, notifications — via Resend's HTTP API
+- **Stripe**: Read access for reconciliation — charges, refunds, disputes, payouts and balance transactions, across **multiple Stripe accounts** from one connector
 - **Tatango**: SMS broadcast platform (Messaging API v2) — subscribers with opt-in bypass flags, per-list custom fields, and webhook registrations
 - **Unified Credentials**: `{CREDENTIAL_NAME}_PASSWORD` pattern for Civis compatibility
 - **Automatic Retry**: Built-in exponential backoff for all APIs
@@ -91,6 +92,9 @@ GEOCODIO_API_KEY_PASSWORD=your-geocodio-api-key
 GITHUB_PAT_PASSWORD=ghp_XXXXXXXXXXXXXXXX
 HEX_API_KEY_PASSWORD=your-hex-personal-access-token
 RESEND_API_KEY_PASSWORD=re_XXXXXXXXXXXXXXXX
+# Stripe: a JSON map of account name -> key, because a key is scoped to ONE account.
+# A single bare key is also accepted and registered as "default".
+STRIPE_CREDENTIALS_PASSWORD={"c3":"rk_live_XXXX","c4":"rk_live_XXXX"}
 TATANGO_LOGIN_EMAIL_PASSWORD=api-user@yourorg.org
 TATANGO_API_KEY_PASSWORD=your-tatango-api-key
 RESEND_FROM_EMAIL=Your Name <auth@mail.commoncause.org>  # optional default sender
@@ -456,6 +460,48 @@ fund_codes = roi.get_codes("donations")
 with ROICRMConnector() as roi:
     donors = roi.search_donors(zip="20001")
 ```
+
+### Stripe Example
+
+```python
+from datetime import date
+from ccef_connections import StripeConnector
+
+stripe = StripeConnector()
+stripe.connect()          # verifies EVERY configured key, not just the first
+stripe.accounts           # ['c3', 'c4', 'store_national', 'store_tx']
+
+# Which account is a key actually for? The id is the authoritative answer.
+stripe.get_account("c3")["id"]
+
+# Donations in a window — for "did this reach the CRM?"
+charges = stripe.list_charges(start=date(2026, 8, 8), end=date(2026, 8, 15), account="c3")
+real = [c for c in charges if c["paid"] and c["status"] == "succeeded"]
+
+# Money going back out — for "what needs reversing in the CRM?"
+refunds = stripe.list_refunds(start=date(2026, 8, 8), end=date(2026, 8, 15), account="c3")
+disputes = stripe.list_disputes(start=date(2026, 8, 8), end=date(2026, 8, 15), account="c3")
+
+# Reconciling to a bank statement? Use balance transactions, not charges:
+# only these carry `fee` and `net`.
+txns = stripe.list_balance_transactions(
+    start=date(2026, 8, 1), end=date(2026, 8, 31), account="c3",
+    types=("charge", "refund", "payout", "stripe_fee", "adjustment"),
+)
+
+# Itemise a single bank deposit
+payouts = stripe.list_payouts(start=date(2026, 8, 1), account="c3")
+lines = stripe.list_balance_transactions(payout=payouts[0]["id"], account="c3")
+```
+
+**Three things worth knowing before you trust the output:**
+
+- **`fee` and `net` are on balance transactions, not charges.** A charge is the gross
+  only. This is the most common way to get a Stripe reconciliation wrong.
+- **`list_charges` includes failed and uncaptured charges.** Filter on
+  `paid and status == "succeeded"` or a declined card looks like a missing gift.
+- **`account=` is required when more than one account is configured** — it is never
+  guessed, because reconciling the wrong entity's money is worse than an error.
 
 ### Geocodio Example
 
