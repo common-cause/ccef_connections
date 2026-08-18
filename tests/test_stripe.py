@@ -396,3 +396,110 @@ def test_health_check_is_false_if_one_account_fails():
     responses = [_make_response(json_data=ACCOUNT_OBJ), _make_response(500, text="x")]
     with patch("requests.request", side_effect=responses):
         assert c.health_check() is False
+
+# ── Per-account credential variables (the preferred form) ─────────────
+
+
+def _clear_stripe_env(monkeypatch):
+    """Discovery scans os.environ, so leftover STRIPE_* vars would leak between tests."""
+    import os
+    for k in list(os.environ):
+        if k.startswith("STRIPE_") and k.endswith("_PASSWORD"):
+            monkeypatch.delenv(k, raising=False)
+
+
+def test_per_account_variable_is_discovered(monkeypatch):
+    _clear_stripe_env(monkeypatch)
+    monkeypatch.setenv(
+        "STRIPE_C3_CREDENTIALS_PASSWORD",
+        '{"api_name":"stripeclaudec3","key":"%s"}' % KEY_C3,
+    )
+    accts = CredentialManager().get_stripe_accounts()
+    assert accts == {"c3": {"key": KEY_C3, "api_name": "stripeclaudec3"}}
+    assert CredentialManager().get_stripe_credentials() == {"c3": KEY_C3}
+
+
+def test_account_name_comes_from_the_variable_name(monkeypatch):
+    _clear_stripe_env(monkeypatch)
+    monkeypatch.setenv("STRIPE_STORE_TX_CREDENTIALS_PASSWORD", '{"key":"%s"}' % KEY_C4)
+    assert sorted(CredentialManager().get_stripe_accounts()) == ["store_tx"]
+
+
+def test_several_per_account_variables_combine(monkeypatch):
+    _clear_stripe_env(monkeypatch)
+    monkeypatch.setenv("STRIPE_C3_CREDENTIALS_PASSWORD", '{"key":"%s"}' % KEY_C3)
+    monkeypatch.setenv("STRIPE_C4_CREDENTIALS_PASSWORD", '{"key":"%s"}' % KEY_C4)
+    assert sorted(CredentialManager().get_stripe_accounts()) == ["c3", "c4"]
+
+
+def test_a_per_account_variable_may_hold_a_bare_key(monkeypatch):
+    _clear_stripe_env(monkeypatch)
+    monkeypatch.setenv("STRIPE_C3_CREDENTIALS_PASSWORD", KEY_C3)
+    assert CredentialManager().get_stripe_accounts()["c3"]["key"] == KEY_C3
+
+
+def test_an_empty_placeholder_is_not_an_error(monkeypatch):
+    """An unfilled placeholder is how --reseed-credentials knows to deliver here."""
+    _clear_stripe_env(monkeypatch)
+    monkeypatch.setenv("STRIPE_C3_CREDENTIALS_PASSWORD", "")
+    monkeypatch.setenv("STRIPE_C4_CREDENTIALS_PASSWORD", '{"key":"%s"}' % KEY_C4)
+    assert sorted(CredentialManager().get_stripe_accounts()) == ["c4"]
+
+
+def test_json_without_a_key_field_is_rejected(monkeypatch):
+    _clear_stripe_env(monkeypatch)
+    monkeypatch.setenv("STRIPE_C3_CREDENTIALS_PASSWORD", '{"api_name":"x"}')
+    with pytest.raises(CredentialError, match='must be a JSON object with a "key"'):
+        CredentialManager().get_stripe_accounts()
+
+
+def test_per_account_wins_over_the_combined_map(monkeypatch):
+    _clear_stripe_env(monkeypatch)
+    monkeypatch.setenv("STRIPE_C3_CREDENTIALS_PASSWORD", '{"key":"%s"}' % KEY_C3)
+    monkeypatch.setenv("STRIPE_CREDENTIALS_PASSWORD", '{"c3":"%s"}' % KEY_C4)
+    assert CredentialManager().get_stripe_accounts()["c3"]["key"] == KEY_C3
+
+
+def test_no_stripe_credential_at_all_is_an_error(monkeypatch):
+    _clear_stripe_env(monkeypatch)
+    with pytest.raises(CredentialError, match="No Stripe credential found"):
+        CredentialManager().get_stripe_accounts()
+
+
+# ── 403 is not a bad key ──────────────────────────────────────────────
+
+
+def test_connect_continues_when_a_key_cannot_read_account(monkeypatch):
+    """The real C3 key cannot read /account. Refusing to connect over that would
+    make the connector unusable with least-privilege restricted keys."""
+    _clear_stripe_env(monkeypatch)
+    monkeypatch.setenv("STRIPE_C3_CREDENTIALS_PASSWORD", '{"key":"%s"}' % KEY_C3)
+    c = StripeConnector()
+    with patch("requests.request", return_value=_make_response(403, text="no perm")):
+        c.connect()
+    assert c.is_connected() is True
+    assert c.accounts == ["c3"]
+
+
+def test_health_check_tolerates_a_missing_scope():
+    c = _connector({"c3": KEY_C3})
+    with patch("requests.request", return_value=_make_response(403, text="no perm")):
+        assert c.health_check() is True
+
+
+def test_health_check_still_fails_on_a_bad_key():
+    c = _connector({"c3": KEY_C3})
+    with patch("requests.request", return_value=_make_response(401, text="bad")):
+        assert c.health_check() is False
+
+
+def test_api_name_is_exposed(monkeypatch):
+    _clear_stripe_env(monkeypatch)
+    monkeypatch.setenv(
+        "STRIPE_C3_CREDENTIALS_PASSWORD",
+        '{"api_name":"stripeclaudec3","key":"%s"}' % KEY_C3,
+    )
+    c = StripeConnector()
+    with patch("requests.request", return_value=_make_response(403, text="x")):
+        c.connect()
+    assert c.api_name("c3") == "stripeclaudec3"

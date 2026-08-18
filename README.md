@@ -92,9 +92,12 @@ GEOCODIO_API_KEY_PASSWORD=your-geocodio-api-key
 GITHUB_PAT_PASSWORD=ghp_XXXXXXXXXXXXXXXX
 HEX_API_KEY_PASSWORD=your-hex-personal-access-token
 RESEND_API_KEY_PASSWORD=re_XXXXXXXXXXXXXXXX
-# Stripe: a JSON map of account name -> key, because a key is scoped to ONE account.
-# A single bare key is also accepted and registered as "default".
-STRIPE_CREDENTIALS_PASSWORD={"c3":"rk_live_XXXX","c4":"rk_live_XXXX"}
+# Stripe: ONE VARIABLE PER ACCOUNT, because a key is scoped to one Stripe account.
+# The account name comes from the variable: STRIPE_C3_... -> "c3".
+STRIPE_C3_CREDENTIALS_PASSWORD={"api_name":"stripeclaudec3","key":"rk_live_XXXX"}
+STRIPE_C4_CREDENTIALS_PASSWORD={"api_name":"stripeclaudec4","key":"rk_live_XXXX"}
+# A combined map, or a single bare key (registered as "default"), also work:
+# STRIPE_CREDENTIALS_PASSWORD={"c3":"rk_live_XXXX","c4":"rk_live_XXXX"}
 TATANGO_LOGIN_EMAIL_PASSWORD=api-user@yourorg.org
 TATANGO_API_KEY_PASSWORD=your-tatango-api-key
 RESEND_FROM_EMAIL=Your Name <auth@mail.commoncause.org>  # optional default sender
@@ -502,6 +505,8 @@ lines = stripe.list_balance_transactions(payout=payouts[0]["id"], account="c3")
   `paid and status == "succeeded"` or a declined card looks like a missing gift.
 - **`account=` is required when more than one account is configured** — it is never
   guessed, because reconciling the wrong entity's money is worse than an error.
+- **A 403 is not a bad key.** It means the restricted key authenticated but lacks a
+  permission for that resource. `connect()` warns and continues; only a 401 raises.
 
 ### Geocodio Example
 

@@ -77,18 +77,30 @@ class StripeConnector(BaseConnection):
     """
     Stripe connector for reconciliation-grade read access.
 
-    Credentials are stored as JSON in ``STRIPE_CREDENTIALS_PASSWORD``, mapping an
-    account name of your choosing to that account's API key::
+    **Credentials — one variable per Stripe account** (the preferred form, because
+    the meta-project reseeds a fixed set of named keys and this lets each account be
+    granted and rotated on its own)::
 
-        STRIPE_CREDENTIALS_PASSWORD={"c3":"rk_live_...","c4":"rk_live_..."}
+        STRIPE_C3_CREDENTIALS_PASSWORD={"api_name":"stripeclaudec3","key":"rk_live_..."}
+        STRIPE_C4_CREDENTIALS_PASSWORD={"api_name":"stripeclaudec4","key":"rk_live_..."}
 
-    A single bare key is also accepted and registered as ``"default"``.
+    The account name comes from the variable itself: ``STRIPE_C3_...`` -> ``"c3"``,
+    ``STRIPE_STORE_TX_...`` -> ``"store_tx"``. A combined map, or a single bare key
+    registered as ``"default"``, are also accepted — see
+    :meth:`CredentialManager.get_stripe_accounts`.
 
-    ⚠ **Restricted keys (`rk_...`) are recommended and need read scopes on the
-    resources you call** — Charges, Refunds, Disputes, Payouts and Balance
-    transactions cover everything here. A missing scope returns HTTP 403; this
-    connector surfaces that as a message naming the resource rather than a bare
-    error, because the Stripe dashboard is the only place to fix it.
+    ⚠ **Restricted keys (`rk_...`) are recommended, and a least-privilege one will
+    not have every permission.** Charges, Refunds, Disputes, Payouts and Balance
+    transactions are what this connector reads; grant those. A missing permission
+    returns **403**, which this connector reports with the resource named, because
+    the Stripe dashboard is the only place to fix it.
+
+    ⚠ **403 and 401 mean opposite things and are not conflated.** A 403 proves the
+    key is genuine and merely scope-limited, so :meth:`connect` warns and continues;
+    a 401 means the key itself is bad and raises. Refusing to connect over a missing
+    permission would make this unusable with exactly the keys it recommends —
+    verified against the real C3 key, which cannot read ``/account`` but reads all
+    five data resources.
 
     Examples:
         >>> connector = StripeConnector()
@@ -117,6 +129,8 @@ class StripeConnector(BaseConnection):
         """
         super().__init__()
         self._keys: Dict[str, str] = {}
+        self._api_names: Dict[str, str] = {}
+        self._scope_limited: set = set()
         self._api_version = api_version
 
     # ── Connection lifecycle ──────────────────────────────────────────
@@ -134,20 +148,41 @@ class StripeConnector(BaseConnection):
             AuthenticationError: If any configured key is rejected
             ConnectionError: If the API is unreachable
         """
-        self._keys = self._credential_manager.get_stripe_credentials()
+        records = self._credential_manager.get_stripe_accounts()
+        self._keys = {n: r["key"] for n, r in records.items()}
+        self._api_names = {n: r.get("api_name", "") for n, r in records.items()}
+        self._scope_limited = set()
         for name in sorted(self._keys):
-            info = self._request("GET", "/account", account=name)
-            mode = "live" if info.get("charges_enabled") is not None else "unknown"
-            logger.info(
-                "Stripe account %r verified: id=%s livemode_key=%s (%s)",
-                name, info.get("id"), self._is_live(name), mode,
-            )
+            try:
+                info = self._request("GET", "/account", account=name)
+                logger.info(
+                    "Stripe account %r verified: stripe_id=%s api_name=%s live_key=%s",
+                    name, info.get("id"), self._api_names.get(name) or "(unnamed)",
+                    self._is_live(name),
+                )
+            except AuthenticationError as e:
+                # ⚠ A 403 here is NOT a failure. It proves the key authenticated;
+                # the probe endpoint simply is not in its permissions. Least-
+                # privilege restricted keys routinely lack `/account`, and refusing
+                # to connect over that would defeat the point of recommending them.
+                # A 401 is a genuinely bad key and still raises.
+                if getattr(e, "status_code", None) != 403:
+                    raise
+                self._scope_limited.add(name)
+                logger.warning(
+                    "Stripe account %r: key authenticated but cannot read /account "
+                    "(no permission). Connected anyway — grant 'Account' read in the "
+                    "Stripe dashboard if you want identity checks. api_name=%s",
+                    name, self._api_names.get(name) or "(unnamed)",
+                )
         self._is_connected = True
         logger.info("Successfully connected to Stripe (%d account(s))", len(self._keys))
 
     def disconnect(self) -> None:
         """Forget the loaded keys."""
         self._keys = {}
+        self._api_names = {}
+        self._scope_limited = set()
         self._is_connected = False
         logger.debug("Disconnected from Stripe")
 
@@ -160,12 +195,17 @@ class StripeConnector(BaseConnection):
         """
         if not self._is_connected or not self._keys:
             return False
-        try:
-            for name in self._keys:
+        for name in self._keys:
+            try:
                 self._request("GET", "/account", account=name)
-            return True
-        except Exception:
-            return False
+            except AuthenticationError as e:
+                # Same reasoning as connect(): a 403 means reachable-and-authenticated,
+                # so it is healthy. Only a 401 or a transport failure is not.
+                if getattr(e, "status_code", None) != 403:
+                    return False
+            except Exception:
+                return False
+        return True
 
     # ── Accounts ──────────────────────────────────────────────────────
 
@@ -173,6 +213,17 @@ class StripeConnector(BaseConnection):
     def accounts(self) -> List[str]:
         """The configured account names, sorted."""
         return sorted(self._keys)
+
+    def api_name(self, account: Optional[str] = None) -> str:
+        """
+        The `api_name` recorded alongside this account's key, or "".
+
+        Useful for reconciling "which key is this?" against the Stripe dashboard,
+        where the key is listed under the name you gave it.
+        """
+        if account is None and len(self._api_names) == 1:
+            return next(iter(self._api_names.values()))
+        return self._api_names.get(account or "", "")
 
     def _is_live(self, account: Optional[str] = None) -> bool:
         """Whether this account's key is a live-mode key, read off its prefix."""
@@ -261,22 +312,30 @@ class StripeConnector(BaseConnection):
             raise ConnectionError(f"Stripe API request failed: {e}") from e
 
         if resp.status_code == 401:
-            raise AuthenticationError(
+            err = AuthenticationError(
                 f"Stripe rejected the key for account "
                 f"{account or DEFAULT_ACCOUNT!r}. A key truncated on paste looks "
                 f"identical to a revoked one here — check its full length in the "
                 f"Stripe dashboard."
             )
+            err.status_code = 401
+            raise err
         if resp.status_code == 403:
-            # ⚠ Worth its own branch: with restricted keys this is the common
-            # failure, and it is fixable only in the dashboard. Say which
-            # resource was refused.
-            raise AuthenticationError(
+            # ⚠ 401 and 403 mean opposite things here and must not be conflated.
+            # 401 = the key is bad. 403 = the key is GENUINE and authenticated, and
+            # merely lacks a permission for this resource — fixable only in the
+            # Stripe dashboard. `status_code` is attached so connect() can tell the
+            # two apart: refusing to connect over a missing scope would make this
+            # connector unusable with exactly the least-privilege keys it
+            # recommends.
+            err = AuthenticationError(
                 f"Stripe refused {method} {path} for account "
                 f"{account or DEFAULT_ACCOUNT!r} (403). A restricted key needs a "
                 f"read permission for this resource; grant it in the Stripe "
                 f"dashboard under the key's permissions. Detail: {resp.text[:300]}"
             )
+            err.status_code = 403
+            raise err
         if resp.status_code == 429:
             retry_after = int(resp.headers.get("Retry-After", 5))
             raise RateLimitError(
