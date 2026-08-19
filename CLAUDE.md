@@ -1,6 +1,16 @@
 # CCEF Connections
 
-Reusable Python library providing unified connection management for CCEF data integrations. Connectors: Airtable, OpenAI/ChatGPT, Google Sheets, BigQuery, HelpScout, Zoom, Action Network, Action Builder, Asana, PTV, ROI CRM, Geocodio, GitHub, Hex, Email (Resend), Tatango (SMS). Uses Civis-compatible {CREDENTIAL_NAME}_PASSWORD env var pattern.
+Reusable Python library providing unified connection management for CCEF data integrations. Connectors: Airtable, OpenAI/ChatGPT, Google Sheets, BigQuery, HelpScout, Zendesk, Zoom, Action Network, Action Builder, Asana, PTV, ROI CRM, Geocodio, GitHub, Hex, Email (Resend), Tatango (SMS). Uses Civis-compatible {CREDENTIAL_NAME}_PASSWORD env var pattern.
+
+## Zendesk connector — read-only by default
+
+`ZendeskConnector` defaults to OAuth scope `read` and deliberately exposes **no
+config-object mutators** (triggers/macros/views/groups/forms). CCEF's Zendesk is a
+*shared* instance — Campaigns lives inside IT's — so read and write are separated by
+credential, not convention, and config mutation belongs with the reviewed
+config-as-code apply script. Do not add token/basic auth: Zendesk is removing API
+tokens (creation blocked 2026-10-27, all tokens dead 2027-04-30). The rate budget is
+per-account and shared, so the connector self-throttles below the ceiling.
 
 ## PII / Data Handling
 

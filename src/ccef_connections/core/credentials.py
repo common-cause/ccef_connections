@@ -184,6 +184,35 @@ class CredentialManager:
             )
         return creds
 
+    def get_zendesk_credentials(self) -> Dict[str, Any]:
+        """
+        Get Zendesk OAuth2 client credentials.
+
+        Zendesk is removing API tokens as an auth method (creation blocked
+        2026-10-27, all tokens deactivated 2027-04-30), so this is the
+        client_credentials pair, not a token. ``client_id`` is the OAuth
+        client's *Identifier* field -- an author-chosen slug -- not its
+        numeric id.
+
+        Returns:
+            Dict with 'client_id' and 'client_secret' keys
+
+        Raises:
+            CredentialError: If the credential is missing, invalid JSON,
+                or missing required keys
+        """
+        creds = self.get_credential("ZENDESK_CREDENTIALS", is_json=True)
+        if not isinstance(creds, dict):
+            raise CredentialError(
+                "ZENDESK_CREDENTIALS_PASSWORD must be a valid JSON object"
+            )
+        missing = [k for k in ("client_id", "client_secret") if k not in creds]
+        if missing:
+            raise CredentialError(
+                f"ZENDESK_CREDENTIALS_PASSWORD missing required keys: {', '.join(missing)}"
+            )
+        return creds
+
     def get_action_network_key(self) -> str:
         """
         Get the Action Network API key.

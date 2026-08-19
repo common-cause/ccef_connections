@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from .sheets_writer import SheetsWriterConnector
     from .stripe import StripeConnector
     from .tatango import TatangoConnector
+    from .zendesk import ZendeskConnector
     from .zoom import ZoomConnector
 
 # Lazy attribute -> (submodule, required extra or None).
@@ -48,6 +49,7 @@ _LAZY_IMPORTS = {
     "SheetsWriterConnector": ("sheets_writer", "sheets"),
     "StripeConnector": ("stripe", None),
     "TatangoConnector": ("tatango", None),
+    "ZendeskConnector": ("zendesk", None),
     "ZoomConnector": ("zoom", None),
 }
 

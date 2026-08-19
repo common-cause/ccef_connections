@@ -440,6 +440,52 @@ def retry_asana_operation(func: Callable) -> Callable:
     )(func)
 
 
+def _wait_for_zendesk_rate_limit(retry_state) -> float:
+    """Wait the duration the Zendesk API requested, plus a 2s buffer."""
+    exc = retry_state.outcome.exception()
+    if isinstance(exc, RateLimitError) and exc.retry_after:
+        return float(exc.retry_after) + 2.0
+    return 10.0
+
+
+def retry_zendesk_operation(func: Callable) -> Callable:
+    """
+    Decorator for Zendesk API operations with retry logic.
+
+    Zendesk returns 429 with a Retry-After header (seconds) when the account's
+    per-minute ceiling is exceeded (400/min on Suite Growth). The connector
+    translates that into RateLimitError with retry_after populated; this
+    decorator honors that exact wait plus a 2s buffer rather than guessing via
+    exponential backoff.
+
+    The rate budget is per-ACCOUNT, not per-credential, so on a shared instance
+    a 429 may be caused by someone else's automation entirely. Backing off the
+    full requested interval (rather than retrying tightly) is what keeps us from
+    making a neighbour's burst worse.
+
+    Only retries on RateLimitError -- 4xx/5xx surface immediately so the caller
+    sees the real error instead of waiting through five attempts.
+
+    Args:
+        func: The function to decorate
+
+    Returns:
+        Decorated function with Zendesk-specific retry logic
+
+    Examples:
+        >>> @retry_zendesk_operation
+        ... def list_groups():
+        ...     return connector._paginate("/groups.json", resource_key="groups")
+    """
+    return retry(
+        stop=stop_after_attempt(5),
+        wait=_wait_for_zendesk_rate_limit,
+        retry=retry_if_exception_type(RateLimitError),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )(func)
+
+
 def retry_email_operation(func: Callable) -> Callable:
     """
     Decorator for transactional-email (Resend) operations with retry logic.
