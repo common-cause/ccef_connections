@@ -7,19 +7,30 @@
       "WebSearch",
       "WebFetch",
       "mcp__knowledge-library",
+      "mcp__plugin_common-cause-utilities_knowledge-library",
       "mcp__mailroom",
+      "mcp__plugin_common-cause-utilities_mailroom",
       "mcp__bigquery",
+      "mcp__plugin_common-cause-data_bigquery",
       "mcp__schema",
+      "mcp__plugin_common-cause-data_schema",
       "mcp__schema-write",
+      "mcp__plugin_common-cause-data_schema-write",
       "mcp__project-tools",
+      "mcp__plugin_common-cause-utilities_project-tools",
       "mcp__roi_schema",
+      "mcp__plugin_common-cause-data_roi_schema",
       "mcp__google-drive",
-      "mcp__outlook"
+      "mcp__plugin_common-cause-utilities_google-drive",
+      "mcp__outlook",
+      "mcp__plugin_common-cause-assistant_outlook",
+      "mcp__plugin_common-cause-utilities_pdf-press",
+      "mcp__plugin_common-cause-utilities_asana"
     ],
     "defaultMode": "acceptEdits"
   },
   "meta": {
-    "template_version": 10,
+    "template_version": 12,
     "scaffold_date": "2026-05-14",
     "project_type": "basic"
   }
