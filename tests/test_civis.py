@@ -234,6 +234,36 @@ class TestErrorMapping:
         connected._session.request.return_value = _make_response(204, content=b"")
         assert connected._request("DELETE", "/jobs/1/runs/2") is None
 
+    def test_get_404_returns_none_so_lookups_can_say_not_found(self, connected):
+        """`get_container` promises None for a missing object, so a GET-404 must
+        not raise -- otherwise every "does this job exist" check is a try/except.
+        """
+        connected._session.request.return_value = _make_response(
+            404, text='{"error":"not_found"}', content=b'{"error":"not_found"}'
+        )
+        assert connected.get_container(999999999) is None
+        assert connected.get_job(999999999) is None
+
+    def test_non_get_404_still_raises(self, connected):
+        """A 404 on a write means the write went nowhere.
+
+        Swallowing it would report success for something that never happened, so
+        the GET-only exemption must not leak to other verbs.
+        """
+        connected._session.request.return_value = _make_response(
+            404, text='{"error":"not_found"}', content=b'{"error":"not_found"}'
+        )
+        with pytest.raises(ConnectionError):
+            connected.update_container(999999999, docker_image_tag="8.5.0")
+        with pytest.raises(ConnectionError):
+            connected.run_job(999999999)
+
+    def test_paginate_treats_404_as_an_empty_collection(self, connected):
+        connected._session.request.return_value = _make_response(
+            404, text="{}", content=b"{}"
+        )
+        assert list(connected._paginate("/jobs/1/runs")) == []
+
     def test_non_json_body_returned_as_text(self, connected):
         resp = _make_response(200, text="plain", content=b"plain")
         resp.json.side_effect = ValueError("not json")

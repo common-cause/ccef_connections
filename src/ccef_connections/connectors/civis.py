@@ -205,6 +205,11 @@ class CivisConnector(BaseConnection):
         """
         Issue one request and return the raw response, recording rate-limit state.
 
+        A 404 on a **GET** is returned rather than raised, so ``get_*`` methods
+        can answer "no such object" with None. On any other verb a 404 still
+        raises: there, it means the write went nowhere, and swallowing it would
+        report success for something that never happened.
+
         Raises:
             AuthenticationError: For 401 (commonly an EXPIRED KEY) and 403
             RateLimitError: For 429
@@ -257,6 +262,9 @@ class CivisConnector(BaseConnection):
                 f"Civis authorization failed (object owned by another org?): {resp.text}"
             )
 
+        if resp.status_code == 404 and method.upper() == "GET":
+            return resp
+
         if resp.status_code >= 400:
             raise ConnectionError(
                 f"Civis API error {resp.status_code} on {method} {path}: {resp.text}"
@@ -277,7 +285,7 @@ class CivisConnector(BaseConnection):
         See :meth:`_raw` for the error mapping.
         """
         resp = self._raw(method, path, params=params, json_body=json_body)
-        if resp.status_code == 204 or not resp.content:
+        if resp.status_code in (204, 404) or not resp.content:
             return None
         try:
             return resp.json()
@@ -319,6 +327,11 @@ class CivisConnector(BaseConnection):
         while page <= max_pages:
             resp = self._raw("GET", path, params={**merged, "limit": page_size,
                                                   "page_num": page})
+            if resp.status_code == 404:
+                # _raw hands GET-404s back rather than raising; here that means
+                # the collection does not exist, which is an empty result, not an
+                # error dict to iterate over.
+                return
             batch = resp.json() if resp.content else []
             if not isinstance(batch, list):
                 yield batch
