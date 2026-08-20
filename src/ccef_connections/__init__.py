@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from .connectors.sheets_writer import SheetsWriterConnector
     from .connectors.stripe import StripeConnector
     from .connectors.tatango import TatangoConnector
+    from .connectors.zendesk import ZendeskConnector
     from .connectors.zoom import ZoomConnector
 
 __version__ = "0.7.1"
@@ -68,6 +69,7 @@ _LAZY_IMPORTS = {
     "SheetsWriterConnector": ("ccef_connections.connectors.sheets_writer", "sheets"),
     "StripeConnector": ("ccef_connections.connectors.stripe", None),
     "TatangoConnector": ("ccef_connections.connectors.tatango", None),
+    "ZendeskConnector": ("ccef_connections.connectors.zendesk", None),
     "ZoomConnector": ("ccef_connections.connectors.zoom", None),
     # ConfigManager reads config from Google Sheets, so it needs the sheets extra
     "ConfigManager": ("ccef_connections.config", "sheets"),
@@ -92,6 +94,7 @@ __all__ = [
     "SheetsWriterConnector",
     "StripeConnector",
     "TatangoConnector",
+    "ZendeskConnector",
     "ZoomConnector",
     # Configuration
     "ConfigManager",

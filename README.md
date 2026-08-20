@@ -1,6 +1,6 @@
 # CCEF Connections
 
-A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zoom, Action Network, Action Builder, Asana, Protect the Vote (PTV), ROI CRM, Geocodio, GitHub, Hex, Resend (transactional email), Tatango (SMS), and Stripe with Civis credential compatibility.
+A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zendesk, Zoom, Action Network, Action Builder, Asana, Protect the Vote (PTV), ROI CRM, Geocodio, GitHub, Hex, Resend (transactional email), Tatango (SMS), and Stripe with Civis credential compatibility.
 
 ## Features
 
@@ -9,6 +9,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 - **Google Sheets**: Read-only configuration management (`SheetsConnector`) plus read/write spreadsheet publishing (`SheetsWriterConnector`)
 - **BigQuery**: Full read/write data warehouse operations
 - **HelpScout**: Automated email processing — read conversations, reply, add notes, close
+- **Zendesk**: Read access to ticketing and configuration objects, ticket create/update, and a deliberately narrow set of single-object config writes for reviewed config-as-code
 - **Zoom**: Meeting and webinar attendee retrieval — participants, registrants, absentees
 - **Action Network**: Full CRM access — people, tags, events, petitions, forms, fundraising, messages, and more
 - **Action Builder**: Field organizing and relationship mapping — campaigns, people/entities, tags, taggings, and connections
@@ -228,6 +229,58 @@ for thread in threads:
 helpscout.reply_to_conversation(98765, "Thanks for reaching out!", customer_id=12345)
 helpscout.add_note(98765, "Resolved via automation.")
 helpscout.update_conversation_status(98765, 'closed')
+```
+
+### Zendesk Example
+
+```python
+from ccef_connections import ZendeskConnector
+from ccef_connections.connectors.zendesk import ZENDESK_READ_WRITE_SCOPE
+
+# Reads ZENDESK_CREDENTIALS_PASSWORD (OAuth2 client_credentials) and
+# ZENDESK_SUBDOMAIN. Defaults to scope "read".
+zd = ZendeskConnector()
+
+# Configuration objects — the read surface is broad
+forms = zd.list_ticket_forms()
+fields = zd.list_ticket_fields()
+groups = zd.list_groups()
+triggers = zd.list_triggers()
+agents = zd.list_agents()
+
+# Tickets
+ticket = zd.get_ticket(12345)
+open_tickets = zd.list_tickets(params={"status": "open"})
+group_tickets = zd.list_group_tickets(group_id=678)
+
+# Cheap way to size a query without paging every result
+count = zd.search_count("type:ticket status:open group_id:678")
+
+# Writing requires the read-write scope — "write" alone does NOT work.
+# Zendesk issues a token for scope="write" and it then 403s on every call
+# complaining about a missing `read` scope, because even a write reads the
+# acting user first.
+zd_rw = ZendeskConnector(scope=ZENDESK_READ_WRITE_SCOPE)
+
+new_ticket = zd_rw.create_ticket({
+    "subject": "Automated intake",
+    "comment": {"body": "Filed by a scheduled job."},
+    "group_id": 678,
+})
+
+# Single-object config writes, by explicit id, for reviewed config-as-code.
+# NOTE: `required` / `visible_in_portal` are GLOBAL to a ticket field — the
+# forms API stores only ticket_field_ids with no per-form overrides, so
+# changing one changes every other form that shares the field.
+zd_rw.update_ticket_field(field_id=901, field={"title": "Jurisdiction"})
+
+# Bulk ticket creation (max 100) returns the job status record already
+# unwrapped; poll it by id
+job = zd_rw.create_many_tickets([{"subject": "a"}, {"subject": "b"}])
+status = zd_rw.get_job_status(job["id"])
+
+# The instance rate budget is shared with IT's automation
+print(zd.rate_limit_status())
 ```
 
 ### Zoom Example
@@ -741,6 +794,7 @@ All credentials follow the `{CREDENTIAL_NAME}_PASSWORD` naming convention:
 - `GOOGLE_SHEETS_CREDENTIALS_PASSWORD` — service account JSON
 - `BIGQUERY_CREDENTIALS_PASSWORD` — service account JSON
 - `HELPSCOUT_CREDENTIALS_PASSWORD` — JSON with `app_id` and `app_secret`
+- `ZENDESK_CREDENTIALS_PASSWORD` — JSON with `client_id` and `client_secret` (OAuth2 client_credentials; `client_id` is the OAuth client's *Identifier* slug, not its numeric id). Plus `ZENDESK_SUBDOMAIN` for the instance — a plain env var, not a `_PASSWORD` credential.
 - `ZOOM_CREDENTIALS_PASSWORD` — JSON with `account_id`, `client_id`, and `client_secret`
 - `ACTION_NETWORK_API_KEY_PASSWORD` — API key string
 - `ACTION_BUILDER_CREDENTIALS_PASSWORD` — JSON with `api_token` and `subdomain`
@@ -752,29 +806,45 @@ All credentials follow the `{CREDENTIAL_NAME}_PASSWORD` naming convention:
 - `HEX_API_KEY_PASSWORD` — Personal Access Token string (workspace admin must have API access enabled; tokens created under user settings → API keys)
 - `RESEND_API_KEY_PASSWORD` — API key string (plus optional `RESEND_FROM_EMAIL` for a default sender — not a `_PASSWORD` credential, just a plain env var)
 - `TATANGO_LOGIN_EMAIL_PASSWORD` + `TATANGO_API_KEY_PASSWORD` — Tatango authenticates with HTTP Basic as `login email : API key`, so both ride as credentials (the email isn't secret, but Civis carries it the same way)
+- `STRIPE_{ACCOUNT}_..._PASSWORD` — one variable per Stripe account, since a key is scoped to a single account. The account name is derived from the variable name (`STRIPE_C3_...` → `"c3"`). A combined JSON map or a single bare key (registered as `"default"`) also work — see the Quick Start above.
 
 This pattern is compatible with Civis Docker environments while also working seamlessly in local development with `.env` files.
 
 ### Retry Logic
 
-All connectors include automatic retry with exponential backoff:
+All connectors retry with exponential backoff, and with one exception (PTV, below)
+every one of them **retries rate limiting (HTTP 429) and nothing else.** That is a
+deliberate, library-wide rule:
 
-- **Airtable**: 5 retries, handles 5 req/sec rate limit
-- **OpenAI**: 5 retries, handles 429 rate limit errors
-- **Google APIs**: 5 retries, handles quota limits
-- **HelpScout**: 5 retries, handles rate limits with auto token refresh on 401
-- **Zoom**: 5 retries, handles rate limits with auto token refresh on 401
-- **Action Network**: 5 retries, handles 429 rate limits (4 req/s)
+- A **429** means the request was *rejected* — nothing was applied server-side, so
+  replaying it cannot duplicate an effect. Safe to retry.
+- A **4xx** (auth, not-found, validation) will never succeed on attempt 2. Retrying
+  only delays the error message that tells you what to fix.
+- A **5xx** leaves the request in an *unknown* state. Several methods here are not
+  idempotent (`get_or_create_spreadsheet`, `batch_upsert`, `create_person`), so
+  replaying a 5xx risks a duplicate write. It surfaces immediately instead.
+- An exception from **our own code** (`KeyError`, `TypeError`) is a bug — it surfaces
+  instantly rather than after five rounds of backoff that look like a network problem.
+
+Per-service detail:
+
+- **Airtable**: 5 retries on 429. Note pyairtable already retries 429 internally (urllib3 `Retry`, 5 attempts), so a rate limit is normally absorbed a layer below this one
+- **OpenAI**: 5 retries on 429. The `openai` SDK under langchain also retries 429/5xx/connection errors internally (`max_retries=2`)
+- **Google APIs** (Sheets, Sheets Writer, BigQuery): 5 retries on 429, matched via a predicate rather than an exception type — gspread reports status on `APIError.response.status_code` instead of raising a typed subclass. gspread is the only client library here with no retry of its own; google-cloud-bigquery retries transient errors internally via `DEFAULT_RETRY`
+- **HelpScout**: 5 retries on 429, with auto token refresh on 401
+- **Zendesk**: 5 retries on 429, honoring the exact `Retry-After` plus a 2s buffer. The rate budget is per-*account* and shared with IT's automation, so the connector also self-throttles client-side (default 120 req/min, under the ~400/min ceiling)
+- **Zoom**: 5 retries on 429, with auto token refresh on 401
+- **Action Network**: 5 retries on 429 (4 req/s limit). Matters more here than elsewhere — many decorated methods write to a people database, so an unknown-state write is never replayed
 - **Action Builder**: 5 retries, handles 429 rate limits (4 req/s)
 - **Asana**: 5 retries on 429 rate limit only (1,500 req/min paid, 150 free), honoring the exact `Retry-After` duration the API specifies plus a 2s buffer. Other HTTP errors — including 402 for paid-tier features on a free workspace — surface immediately.
-- **PTV**: 5 retries, handles transient connection errors and rate limits
+- **PTV**: 5 retries on 429 *and* on the library's `ConnectionError` — the one decorator that still retries more than rate limiting. Because `ConnectionError` here wraps both a genuine `requests` transport failure and any 4xx/5xx response, a PTV 404 currently costs five attempts before surfacing. `PTVConnector` has no test file yet, so it was left alone rather than changed unverified
 - **ROI CRM**: 5 retries on 429 rate limit only (500 req per 5-min window); other HTTP errors surface immediately
 - **GitHub**: 5 retries on 429 / 403 secondary rate limits, honoring the exact `Retry-After` (or `x-ratelimit-reset`) duration the API specifies plus a 2s buffer. Other HTTP errors surface immediately.
 - **Geocodio**: 5 retries on 429 rate limit only; other HTTP errors surface immediately
 - **Hex**: 3 retries with backoff on read calls (60 req/min limit); writes (create/update/delete cell) run single-shot — a retried POST could duplicate a cell
 - **Email (Resend)**: 5 retries on 429 rate limit only; other HTTP errors surface immediately
 - **Tatango**: 5 retries on 429 rate limit only; other HTTP errors (including WAF 403 body blocks) surface immediately. The connector also paces itself client-side (`min_request_interval`, default 3.0s) since the vendor tier is unpublished — and note business-level refusals arrive inside HTTP **201** bodies, which no retry logic sees
-- **Transient errors**: Automatic retry for network failures
+- **Stripe**: 5 retries on 429 rate limit only, waiting as long as Stripe's `Retry-After` asks plus a 1s buffer. 401/403 (including a missing restricted-key scope) surface immediately — that is fixed in the Stripe dashboard, not by retrying
 
 ### Auto-Connect Behavior
 
@@ -862,6 +932,38 @@ defined over Google Sheets) work as long as the sheet is shared with the service
 - `reply_to_conversation(conversation_id, text, customer_id, draft=False)` - Reply to a conversation (customer_id from `get_conversation()` → `primaryCustomer` → `id`)
 - `add_note(conversation_id, text)` - Add an internal note
 - `update_conversation_status(conversation_id, status)` - Set status via PATCH (active/pending/closed)
+
+### ZendeskConnector
+
+Read access to a Zendesk Suite instance's ticketing and configuration objects, ticket create/update, and a deliberately narrow set of single-object config writes.
+
+**Credential:** `ZENDESK_CREDENTIALS_PASSWORD` — JSON with `client_id` and `client_secret`. `client_id` is the OAuth client's *Identifier* field (an author-chosen slug), **not** its numeric id. The instance comes from `ZENDESK_SUBDOMAIN` (or the `subdomain=` constructor arg).
+
+**Auth:** OAuth2 **client_credentials**. API tokens and basic auth are deliberately unsupported — Zendesk is removing API tokens (creation blocked 2026-10-27, all tokens deactivated 2027-04-30, and tokens idle 30+ days auto-deactivate), and an idle-deactivated token fails silently in an unattended job. Base URL: `https://{subdomain}.zendesk.com/api/v2`.
+
+**Scope:** defaults to `"read"`. To write, pass `scope=ZENDESK_READ_WRITE_SCOPE` (`"read write"`) — **not** `"write"`. Zendesk will happily issue a token for `"write"` alone, and that token then 403s on every call complaining about missing `users:read, read`, because even a write reads the acting user first. It reads like an endpoint permission problem; it is the scope string. Note also that the issued token acts as the OAuth client's *owning user*, so that user's role — not the requested scope — is the real permission ceiling.
+
+**Rate limiting:** the ~400/min budget is per-*account* and shared (CCEF's instance is shared with IT, whose provisioning automation already trips occasional 429s). The connector self-throttles to `max_requests_per_minute` (default 120) and honors `Retry-After` rather than racing for headroom.
+
+Reads:
+
+- `get_me()` / `get_account_settings()` / `rate_limit_status()` - Acting user, account settings, and the most recent rate-limit headers seen.
+- `list_groups()`, `list_ticket_forms()`, `list_ticket_fields()`, `list_views()`, `list_triggers()`, `list_automations()`, `list_macros()`, `list_sla_policies()`, `list_brands()`, `list_custom_roles()` - Configuration objects.
+- `get_ticket_field(field_id)` / `get_ticket_form(form_id)` - A single config object by id.
+- `list_users(role=None)`, `list_agents()`, `list_organizations()` - People and orgs.
+- `get_ticket(ticket_id)`, `list_tickets(params=None)`, `list_group_tickets(group_id)` - Tickets.
+- `search_count(query)` - Result count for a search query, without paging the results.
+- `get_job_status(job_id)` - Poll an asynchronous job.
+
+Writes (require the read-write scope):
+
+- `create_ticket(ticket)` / `update_ticket(ticket_id, ticket)` - Single ticket create/update.
+- `create_many_tickets(tickets)` - Up to 100 tickets in one async job; returns the job status record (already unwrapped), which you poll via `get_job_status(job["id"])`. Raises `ValueError` above 100.
+- `create_ticket_field(field)` / `update_ticket_field(field_id, field)` / `update_ticket_form(form_id, form)` / `create_trigger(trigger)` / `update_trigger(trigger_id, trigger)` - Single-object config writes for reviewed config-as-code.
+
+**The write surface is deliberately narrow and pinned by a test.** Every config mutation targets ONE object by an explicit id the caller had to look up. There are **no deletes at all**, and nothing bulk or reconciling for config — an enumerate-config-and-write-it-back helper would be one bug away from clobbering IT's production helpdesk. `test_zendesk.py::test_write_surface_is_an_explicit_allowlist` fails if a mutator is added, so widening it takes a deliberate edit. Namespace policy (which objects a project may touch) belongs in that project's reviewed apply script, not here.
+
+⚠️ A ticket field's `required` and `visible_in_portal` properties are **global to the field**, not per-form. The forms API stores only `ticket_field_ids` with no per-form overrides, so changing one of those properties on a shared field changes every other form that uses it.
 
 ### ZoomConnector
 
@@ -1414,7 +1516,24 @@ for conv in conversations:
 
 ## Testing
 
-The library has 968 unit tests covering the connectors and core modules (every connector except `PTVConnector` and `SheetsWriterConnector`, which do not yet have dedicated test files).
+The library has 1,207 unit tests covering the connectors and core modules (every connector except `PTVConnector` and `SheetsWriterConnector`, which do not yet have dedicated test files). The full suite runs in well under 10 seconds — every test mocks its transport, so nothing should take measurable time.
+
+**Retry paths must never actually sleep.** The service decorators carry real
+exponential backoff, so a test that drives a decorated method to exhaust its retries
+burns ~30 seconds of wall clock — and still *passes*, which is exactly how a
+retry-predicate bug once hid tens of minutes of `time.sleep` in this suite. When
+exercising a decorated retry path, patch `tenacity.nap.time.sleep` (it works because
+tenacity's `nap` module resolves `time.sleep` dynamically at call time):
+
+```python
+@patch("ccef_connections.connectors.geocodio.requests.request")
+@patch("tenacity.nap.time.sleep")
+def test_persistent_429_reraises(self, mock_sleep, mock_req, connected_connector):
+    ...
+```
+
+`pytest-timeout` enforces a 10-second cap per test (`timeout = 10` in
+`pyproject.toml`) so a test that forgets this fails instead of just running slowly.
 
 ```bash
 # Run all tests
@@ -1428,6 +1547,7 @@ pytest tests/test_action_builder.py -v
 pytest tests/test_action_network.py -v
 pytest tests/test_asana.py -v
 pytest tests/test_helpscout.py -v
+pytest tests/test_zendesk.py -v
 pytest tests/test_zoom.py -v
 pytest tests/test_airtable.py -v
 pytest tests/test_bigquery.py -v
@@ -1438,6 +1558,8 @@ pytest tests/test_github.py -v
 pytest tests/test_hex.py -v
 pytest tests/test_geocodio.py -v
 pytest tests/test_email_connector.py -v
+pytest tests/test_stripe.py -v
+pytest tests/test_tatango.py -v
 
 # Run core and config tests
 pytest tests/test_core.py -v
@@ -1521,4 +1643,4 @@ For issues or questions:
 
 ## Version
 
-Current version: 0.7.0
+Current version: 0.7.1

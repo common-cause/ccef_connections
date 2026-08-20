@@ -79,6 +79,13 @@ target-version = ["py39"]
 profile = "black"
 line_length = 100
 
+[tool.ruff.lint.per-file-ignores]
+# The TYPE_CHECKING block re-exports every connector for IDE completion while
+# the runtime path loads them lazily via PEP 562 __getattr__. Ruff can't see
+# these as re-exports because __all__ is computed (`list(_LAZY_IMPORTS)`)
+# rather than a literal, so it reports each one as an unused import.
+"src/ccef_connections/connectors/__init__.py" = ["F401"]
+
 [tool.mypy]
 python_version = "3.9"
 warn_return_any = true

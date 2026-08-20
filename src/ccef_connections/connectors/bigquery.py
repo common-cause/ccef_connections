@@ -198,8 +198,10 @@ class BigQueryConnector(BaseConnection):
             >>> df = connector.query_to_dataframe("SELECT * FROM dataset.table")
             >>> print(df.head())
         """
+        # Availability probe only — the conversion below goes through
+        # results.to_dataframe(), so `pd` itself is intentionally unused.
         try:
-            import pandas as pd
+            import pandas as pd  # noqa: F401
         except ImportError:
             raise ImportError(
                 "pandas is required for query_to_dataframe. "
@@ -376,8 +378,10 @@ class BigQueryConnector(BaseConnection):
             >>> df = pd.DataFrame({'col1': [1, 2, 3], 'col2': ['a', 'b', 'c']})
             >>> connector.load_dataframe(df, 'dataset.table', if_exists='append')
         """
+        # Availability probe only — the caller supplies the DataFrame, so `pd`
+        # itself is intentionally unused.
         try:
-            import pandas as pd
+            import pandas as pd  # noqa: F401
         except ImportError:
             raise ImportError(
                 "pandas is required for load_dataframe. "

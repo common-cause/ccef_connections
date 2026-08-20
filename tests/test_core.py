@@ -653,3 +653,69 @@ class TestGoogleRateLimitPredicate:
         # Our own RateLimitError still matches; nothing else does.
         assert retry_module._is_google_rate_limit(RateLimitError("slow down")) is True
         assert retry_module._is_google_rate_limit(Exception("boom")) is False
+
+
+class TestLazyImportRegistration:
+    """Every connector must be registered in BOTH _LAZY_IMPORTS maps.
+
+    Connectors lazy-load via PEP 562 ``__getattr__``, and the map is duplicated
+    in ``ccef_connections/__init__.py`` and
+    ``ccef_connections/connectors/__init__.py``. Registering in only one leaves
+    the connector importable from one path and not the other — ZendeskConnector
+    shipped that way and was missing from the top-level package entirely.
+    """
+
+    @staticmethod
+    def _maps():
+        """Both maps, filtered to connectors.
+
+        The top-level map also carries ConfigManager, which is not a connector
+        and correctly has no entry in the connectors package.
+        """
+        import ccef_connections
+        import ccef_connections.connectors as connectors_pkg
+
+        def connectors_only(mapping):
+            return {k: v for k, v in mapping.items() if k.endswith("Connector")}
+
+        return (
+            connectors_only(ccef_connections._LAZY_IMPORTS),
+            connectors_only(connectors_pkg._LAZY_IMPORTS),
+        )
+
+    def test_both_maps_register_the_same_names(self):
+        top_level, connectors = self._maps()
+        assert set(top_level) == set(connectors)
+
+    def test_both_maps_agree_on_the_required_extra(self):
+        """A connector must not claim different extras from the two paths."""
+        top_level, connectors = self._maps()
+        mismatched = {
+            name: (top_level[name][1], connectors[name][1])
+            for name in set(top_level) & set(connectors)
+            if top_level[name][1] != connectors[name][1]
+        }
+        assert mismatched == {}
+
+    def test_all_exports_are_resolvable(self):
+        """Every name in __all__ actually resolves, not just appears in a list."""
+        import ccef_connections
+
+        for name in ccef_connections.__all__:
+            assert getattr(ccef_connections, name) is not None, name
+
+    def test_every_connector_module_is_registered(self):
+        """A new connector file must not be left out of the maps entirely."""
+        import pkgutil
+
+        import ccef_connections.connectors as connectors_pkg
+
+        on_disk = {
+            module.name
+            for module in pkgutil.iter_modules(connectors_pkg.__path__)
+            if not module.name.startswith("_")
+        }
+        registered = {
+            module_name for module_name, _extra in connectors_pkg._LAZY_IMPORTS.values()
+        }
+        assert on_disk - registered == set()
