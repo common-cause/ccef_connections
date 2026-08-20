@@ -145,6 +145,77 @@ class SheetsWriterConnector(BaseConnection):
             return ss
 
     @retry_google_operation
+    def open_spreadsheet(self, spreadsheet_id: str) -> gspread.Spreadsheet:
+        """
+        Open an existing spreadsheet by ID.
+
+        Use this for sheets you don't own the title of — trackers, partner
+        sheets, anything referenced by URL. get_or_create_spreadsheet is for
+        sheets this pipeline owns and may need to create.
+
+        Args:
+            spreadsheet_id: The Google Sheets spreadsheet ID (from its URL)
+
+        Returns:
+            gspread.Spreadsheet instance
+        """
+        self._ensure_connected()
+        logger.debug(f"Opening spreadsheet by id: {spreadsheet_id}")
+        return self._client.open_by_key(spreadsheet_id)
+
+    @retry_google_operation
+    def get_range(
+        self,
+        spreadsheet: gspread.Spreadsheet,
+        worksheet_name: str,
+        range_name: str,
+    ) -> List[List[Any]]:
+        """
+        Read an A1-notation range from a worksheet.
+
+        Short rows are returned short (Sheets truncates trailing empties), so
+        index defensively when reading a rectangular block.
+
+        Args:
+            spreadsheet: Target spreadsheet
+            worksheet_name: Tab name to read from
+            range_name: A1 notation relative to the tab, e.g. "A4:B54"
+
+        Returns:
+            List of rows; each row is a list of cell values
+        """
+        ws = spreadsheet.worksheet(worksheet_name)
+        return ws.get(range_name)
+
+    @retry_google_operation
+    def update_cell(
+        self,
+        spreadsheet: gspread.Spreadsheet,
+        worksheet_name: str,
+        row: int,
+        col: int,
+        value: Any,
+    ) -> None:
+        """
+        Write a single cell, leaving the rest of the worksheet untouched.
+
+        write_worksheet clears the tab first, so it can't be used to update one
+        cell of a sheet someone else maintains. This can.
+
+        Args:
+            spreadsheet: Target spreadsheet
+            worksheet_name: Tab name to write to
+            row: 1-based row number
+            col: 1-based column number
+            value: Cell value
+        """
+        ws = spreadsheet.worksheet(worksheet_name)
+        ws.update_cell(row, col, value)
+        logger.info(
+            f"Updated {worksheet_name}!R{row}C{col} in '{spreadsheet.title}'"
+        )
+
+    @retry_google_operation
     def get_or_add_worksheet(
         self, spreadsheet: gspread.Spreadsheet, title: str
     ) -> gspread.Worksheet:
