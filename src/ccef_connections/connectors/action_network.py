@@ -17,7 +17,12 @@ import requests
 
 from ..core.base import BaseConnection
 from ..core.retry import retry_action_network_operation
-from ..exceptions import AuthenticationError, ConnectionError, RateLimitError
+from ..exceptions import (
+    AuthenticationError,
+    ConnectionError,
+    CredentialError,
+    RateLimitError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +65,13 @@ class ActionNetworkConnector(BaseConnection):
             self._api_key = self._credential_manager.get_action_network_key()
             self._is_connected = True
             logger.info("Successfully connected to Action Network")
+        except CredentialError:
+            # Re-raised as-is: a missing credential is not a connection
+            # failure, and the two are sibling classes so wrapping meant
+            # `except CredentialError` could never fire. Matches the docstring
+            # above and SheetsConnector/BigQueryConnector/etc.
+            logger.error("Failed to connect to Action Network: credentials missing")
+            raise
         except Exception as e:
             logger.error(f"Failed to connect to Action Network: {str(e)}")
             raise ConnectionError(

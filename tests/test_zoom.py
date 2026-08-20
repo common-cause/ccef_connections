@@ -137,12 +137,24 @@ class TestConnect:
             connector.connect()
 
     def test_connect_missing_credentials(self):
+        """CredentialError is re-raised as-is, not wrapped in ConnectionError."""
         connector = ZoomConnector()
         connector._credential_manager.get_zoom_credentials = MagicMock(
             side_effect=CredentialError("missing")
         )
 
-        with pytest.raises(ConnectionError, match="missing"):
+        with pytest.raises(CredentialError, match="missing") as exc_info:
+            connector.connect()
+
+        assert not isinstance(exc_info.value, ConnectionError)
+
+    def test_connect_still_wraps_unexpected_failures(self):
+        connector = ZoomConnector()
+        connector._credential_manager.get_zoom_credentials = MagicMock(
+            side_effect=RuntimeError("something odd")
+        )
+
+        with pytest.raises(ConnectionError, match="Failed to connect to Zoom"):
             connector.connect()
 
     def test_disconnect(self, connected_connector):

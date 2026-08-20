@@ -123,36 +123,50 @@ class TestConnect:
         assert connector._api_key == FAKE_API_KEY
         connector._credential_manager.get_ptv_api_key.assert_called_once()
 
-    def test_missing_credential_becomes_connection_error(self, connector):
-        """Current behavior: CredentialError is wrapped, not re-raised.
+    def test_missing_credential_raises_credential_error(self, connector):
+        """CredentialError is re-raised as-is, matching the house pattern.
 
-        NOTE this differs from the house pattern. SheetsConnector,
-        SheetsWriterConnector and ZendeskConnector all `except CredentialError:
-        raise` before their generic handler, so a missing credential surfaces as
-        CredentialError. PTV's connect() has only a bare `except Exception`, so a
-        missing PTV_API_KEY_PASSWORD reports as a connection failure — and its
-        own docstring says it raises CredentialError. Test pinned to the actual
-        behavior; the mismatch is flagged rather than silently blessed.
+        A missing credential is not a connection failure. It used to be wrapped
+        in ConnectionError, which told the caller to check the network when the
+        fix is to set PTV_API_KEY_PASSWORD.
         """
         connector._credential_manager.get_ptv_api_key.side_effect = CredentialError(
             "PTV_API_KEY_PASSWORD not set"
         )
 
-        with pytest.raises(ConnectionError, match="Failed to connect to PTV"):
+        with pytest.raises(CredentialError, match="PTV_API_KEY_PASSWORD not set"):
             connector.connect()
 
         assert not connector.is_connected()
 
-    def test_connection_error_message_carries_the_cause(self, connector):
+    def test_credential_error_is_not_wrapped_in_connection_error(self, connector):
+        """Regression guard: the two are sibling classes, not parent/child.
+
+        CredentialError and ConnectionError both descend from
+        CCEFConnectionError but neither subclasses the other, so wrapping meant
+        `except CredentialError` could never fire for a missing PTV key.
+        """
         connector._credential_manager.get_ptv_api_key.side_effect = CredentialError(
             "PTV_API_KEY_PASSWORD not set"
         )
 
-        with pytest.raises(ConnectionError) as exc_info:
+        with pytest.raises(CredentialError) as exc_info:
             connector.connect()
 
-        assert "PTV_API_KEY_PASSWORD not set" in str(exc_info.value)
-        assert isinstance(exc_info.value.__cause__, CredentialError)
+        assert not isinstance(exc_info.value, ConnectionError)
+
+    def test_unexpected_failure_still_becomes_connection_error(self, connector):
+        """Anything that isn't a CredentialError is still wrapped."""
+        connector._credential_manager.get_ptv_api_key.side_effect = RuntimeError(
+            "something odd"
+        )
+
+        with pytest.raises(ConnectionError, match="Failed to connect to PTV") as exc_info:
+            connector.connect()
+
+        assert "something odd" in str(exc_info.value)
+        assert isinstance(exc_info.value.__cause__, RuntimeError)
+        assert not connector.is_connected()
 
 
 class TestDisconnect:
@@ -581,14 +595,15 @@ class TestRetry:
     ):
         """A missing credential must fail fast, not five times.
 
-        connect() wraps CredentialError into ConnectionError, so before the
-        narrowing this cost five attempts of backoff in a Civis job.
+        It reaches the caller through a decorated method, so this covers both
+        halves of the fix: connect() now re-raises CredentialError instead of
+        wrapping it, and the predicate wouldn't retry it either way.
         """
         connector._credential_manager.get_ptv_api_key.side_effect = CredentialError(
             "PTV_API_KEY_PASSWORD not set"
         )
 
-        with pytest.raises(ConnectionError, match="Failed to connect to PTV"):
+        with pytest.raises(CredentialError, match="PTV_API_KEY_PASSWORD not set"):
             connector.get_users("PA")
 
         assert connector._credential_manager.get_ptv_api_key.call_count == 1

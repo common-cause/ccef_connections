@@ -16,7 +16,12 @@ import requests
 
 from ..core.base import BaseConnection
 from ..core.retry import retry_helpscout_operation
-from ..exceptions import AuthenticationError, ConnectionError, RateLimitError
+from ..exceptions import (
+    AuthenticationError,
+    ConnectionError,
+    CredentialError,
+    RateLimitError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +63,13 @@ class HelpScoutConnector(BaseConnection):
             self._fetch_token(creds["app_id"], creds["app_secret"])
             self._is_connected = True
             logger.info("Successfully connected to HelpScout")
+        except CredentialError:
+            # Re-raised as-is: a missing credential is not a connection
+            # failure, and the two are sibling classes so wrapping meant
+            # `except CredentialError` could never fire. Matches the docstring
+            # above and SheetsConnector/BigQueryConnector/etc.
+            logger.error("Failed to connect to HelpScout: credentials missing")
+            raise
         except AuthenticationError:
             logger.error("Failed to connect to HelpScout: authentication failed")
             raise

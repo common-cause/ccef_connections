@@ -116,14 +116,29 @@ class TestConnect:
         c._credential_manager.get_action_builder_credentials = MagicMock(
             side_effect=CredentialError("missing")
         )
-        with pytest.raises(ConnectionError, match="missing"):
+        with pytest.raises(CredentialError, match="missing"):
             c.connect()
 
-    def test_connect_credential_error_wraps(self, connector):
+    def test_connect_reraises_credential_error_unwrapped(self, connector):
+        """A missing credential is not a connection failure.
+
+        CredentialError and ConnectionError are siblings, so wrapping meant
+        `except CredentialError` could never fire for a missing credential.
+        """
         connector._credential_manager.get_action_builder_credentials = MagicMock(
             side_effect=CredentialError("bad json")
         )
-        with pytest.raises(ConnectionError):
+        with pytest.raises(CredentialError) as exc_info:
+            connector.connect()
+
+        assert not isinstance(exc_info.value, ConnectionError)
+
+    def test_connect_still_wraps_unexpected_failures(self, connector):
+        """Anything that isn't a CredentialError is still a ConnectionError."""
+        connector._credential_manager.get_action_builder_credentials = MagicMock(
+            side_effect=RuntimeError("something odd")
+        )
+        with pytest.raises(ConnectionError, match="Failed to connect to Action Builder"):
             connector.connect()
 
 

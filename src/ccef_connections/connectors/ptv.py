@@ -21,7 +21,12 @@ import requests
 
 from ..core.base import BaseConnection
 from ..core.retry import retry_ptv_operation
-from ..exceptions import AuthenticationError, ConnectionError, RateLimitError
+from ..exceptions import (
+    AuthenticationError,
+    ConnectionError,
+    CredentialError,
+    RateLimitError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +89,14 @@ class PTVConnector(BaseConnection):
             self._api_key = self._credential_manager.get_ptv_api_key()
             self._is_connected = True
             logger.info("Successfully connected to PTV")
+        except CredentialError:
+            # Re-raised as-is, matching SheetsConnector/BigQueryConnector/etc.
+            # A missing credential is not a connection failure: wrapping it in
+            # ConnectionError told the caller to check the network when the fix
+            # is to set PTV_API_KEY_PASSWORD. The two are sibling classes, so
+            # `except ConnectionError` never caught this anyway.
+            logger.error("Failed to connect to PTV: PTV_API_KEY credential missing")
+            raise
         except Exception as e:
             logger.error(f"Failed to connect to PTV: {str(e)}")
             raise ConnectionError(f"Failed to connect to PTV: {str(e)}") from e

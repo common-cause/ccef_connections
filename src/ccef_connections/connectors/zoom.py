@@ -17,7 +17,12 @@ import requests
 
 from ..core.base import BaseConnection
 from ..core.retry import retry_zoom_operation
-from ..exceptions import AuthenticationError, ConnectionError, RateLimitError
+from ..exceptions import (
+    AuthenticationError,
+    ConnectionError,
+    CredentialError,
+    RateLimitError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +69,13 @@ class ZoomConnector(BaseConnection):
             )
             self._is_connected = True
             logger.info("Successfully connected to Zoom")
+        except CredentialError:
+            # Re-raised as-is: a missing credential is not a connection
+            # failure, and the two are sibling classes so wrapping meant
+            # `except CredentialError` could never fire. Matches the docstring
+            # above and SheetsConnector/BigQueryConnector/etc.
+            logger.error("Failed to connect to Zoom: credentials missing")
+            raise
         except AuthenticationError:
             logger.error("Failed to connect to Zoom: authentication failed")
             raise

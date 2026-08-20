@@ -103,11 +103,22 @@ class TestConnect:
         assert connector._api_key == FAKE_API_KEY
 
     def test_connect_missing_credentials(self):
+        """CredentialError is re-raised as-is, not wrapped in ConnectionError."""
         c = TatangoConnector()
         c._credential_manager.get_tatango_credentials = MagicMock(
             side_effect=CredentialError("missing")
         )
-        with pytest.raises(ConnectionError, match="missing"):
+        with pytest.raises(CredentialError, match="missing") as exc_info:
+            c.connect()
+
+        assert not isinstance(exc_info.value, ConnectionError)
+
+    def test_connect_still_wraps_unexpected_failures(self):
+        c = TatangoConnector()
+        c._credential_manager.get_tatango_credentials = MagicMock(
+            side_effect=RuntimeError("something odd")
+        )
+        with pytest.raises(ConnectionError, match="Failed to connect to Tatango"):
             c.connect()
 
     def test_disconnect(self, connected):

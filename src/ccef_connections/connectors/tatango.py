@@ -50,6 +50,7 @@ from ..exceptions import (
     AuthenticationError,
     ConfigurationError,
     ConnectionError,
+    CredentialError,
     RateLimitError,
 )
 
@@ -109,7 +110,8 @@ class TatangoConnector(BaseConnection):
         Establish connection to Tatango by loading Basic-auth credentials.
 
         Raises:
-            ConnectionError: If credential loading fails
+            CredentialError: If the Tatango credentials are missing or malformed
+            ConnectionError: If credential loading fails for any other reason
         """
         try:
             creds = self._credential_manager.get_tatango_credentials()
@@ -117,6 +119,13 @@ class TatangoConnector(BaseConnection):
             self._api_key = creds["api_key"]
             self._is_connected = True
             logger.info("Successfully connected to Tatango")
+        except CredentialError:
+            # Re-raised as-is: a missing credential is not a connection
+            # failure, and the two are sibling classes so wrapping meant
+            # `except CredentialError` could never fire. Matches the docstring
+            # above and SheetsConnector/BigQueryConnector/etc.
+            logger.error("Failed to connect to Tatango: credentials missing")
+            raise
         except Exception as e:
             logger.error(f"Failed to connect to Tatango: {str(e)}")
             raise ConnectionError(f"Failed to connect to Tatango: {str(e)}") from e

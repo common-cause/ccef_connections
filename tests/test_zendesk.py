@@ -148,11 +148,22 @@ class TestConnect:
             connector.connect()
 
     def test_missing_credential_keys_raise(self):
+        """CredentialError is re-raised as-is, not wrapped in ConnectionError."""
         c = ZendeskConnector(subdomain=SUBDOMAIN)
         mock_cm = MagicMock()
         mock_cm.get_zendesk_credentials.side_effect = CredentialError("missing keys")
         c._credential_manager = mock_cm
-        with pytest.raises(ConnectionError):
+        with pytest.raises(CredentialError, match="missing keys") as exc_info:
+            c.connect()
+
+        assert not isinstance(exc_info.value, ConnectionError)
+
+    def test_unexpected_failure_still_wraps(self):
+        c = ZendeskConnector(subdomain=SUBDOMAIN)
+        mock_cm = MagicMock()
+        mock_cm.get_zendesk_credentials.side_effect = RuntimeError("something odd")
+        c._credential_manager = mock_cm
+        with pytest.raises(ConnectionError, match="Failed to connect to Zendesk"):
             c.connect()
 
     def test_disconnect_clears_state(self, connected_connector):

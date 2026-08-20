@@ -94,11 +94,20 @@ class TestConnect:
         assert connector._api_key == FAKE_API_KEY
 
     def test_connect_missing_credentials(self):
+        """CredentialError is re-raised as-is, not wrapped in ConnectionError."""
         c = ActionNetworkConnector()
         c._credential_manager.get_action_network_key = MagicMock(
             side_effect=CredentialError("missing")
         )
-        with pytest.raises(ConnectionError, match="missing"):
+        with pytest.raises(CredentialError, match="missing"):
+            c.connect()
+
+    def test_connect_still_wraps_unexpected_failures(self):
+        c = ActionNetworkConnector()
+        c._credential_manager.get_action_network_key = MagicMock(
+            side_effect=RuntimeError("something odd")
+        )
+        with pytest.raises(ConnectionError, match="Failed to connect to Action Network"):
             c.connect()
 
     def test_disconnect(self, connected):

@@ -84,19 +84,33 @@ class TestConnect:
         connector.connect()
         connector._credential_manager.get_resend_api_key.assert_called_once()
 
-    def test_connect_raises_connection_error_on_failure(self, connector):
+    def test_connect_raises_credential_error_on_missing_key(self, connector):
         connector._credential_manager.get_resend_api_key.side_effect = CredentialError(
             "Missing key"
         )
-        with pytest.raises(ConnectionError, match="Failed to connect to Resend"):
+        with pytest.raises(CredentialError, match="Missing key"):
             connector.connect()
 
-    def test_connect_wraps_credential_error(self, connector):
+    def test_connect_does_not_wrap_credential_error(self, connector):
+        """A missing credential surfaces as itself, not as a connection failure.
+
+        The two are sibling classes, so wrapping meant `except CredentialError`
+        could never fire here.
+        """
         original = CredentialError("env var not set")
         connector._credential_manager.get_resend_api_key.side_effect = original
-        with pytest.raises(ConnectionError) as exc_info:
+        with pytest.raises(CredentialError) as exc_info:
             connector.connect()
-        assert exc_info.value.__cause__ is original
+
+        assert exc_info.value is original
+        assert not isinstance(exc_info.value, ConnectionError)
+
+    def test_connect_still_wraps_unexpected_failures(self, connector):
+        connector._credential_manager.get_resend_api_key.side_effect = RuntimeError(
+            "something odd"
+        )
+        with pytest.raises(ConnectionError, match="Failed to connect to Resend"):
+            connector.connect()
 
 
 class TestDisconnect:
