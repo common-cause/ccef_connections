@@ -741,6 +741,64 @@ def retry_snowflake_operation(func: Callable) -> Callable:
     )(func)
 
 
+def _wait_for_civis_rate_limit(retry_state) -> float:
+    """
+    Wait as long as Civis asked, plus a 2s buffer, capped at 60s.
+
+    The cap matters: Civis' budget is 1000 requests per *hour*, so an exhausted
+    quota can legitimately mean "come back in forty minutes". Sleeping that long
+    inside a decorator would look like a hang in a scheduled job and would blow
+    past any surrounding timeout, so we make a bounded number of bounded
+    attempts and let a genuinely exhausted quota surface as an error the caller
+    can act on.
+    """
+    exc = retry_state.outcome.exception()
+    if isinstance(exc, RateLimitError) and exc.retry_after:
+        return min(float(exc.retry_after) + 2.0, 60.0)
+    return 10.0
+
+
+def retry_civis_operation(func: Callable) -> Callable:
+    """
+    Decorator for Civis Platform API operations with retry logic.
+
+    Civis allows 1000 requests/hour per API key and returns 429 on breach. The
+    connector translates that into RateLimitError with retry_after populated;
+    this honors it (bounded — see :func:`_wait_for_civis_rate_limit`) rather
+    than guessing via pure exponential backoff.
+
+    Only retries on RateLimitError. Two reasons that matters more here than
+    elsewhere:
+
+    * ⚠ **A 401 from Civis usually means the API key EXPIRED**, not a blip.
+      Civis caps keys at 30 days with no service-account alternative, so this is
+      a routine end-state, and retrying it just delays the message that says to
+      mint a new one. The connector raises AuthenticationError, which is not
+      retried.
+    * The decorated methods include run triggers and object mutations on a
+      platform shared with other TMC member orgs. Replaying an unknown-state
+      write is not something to do automatically.
+
+    Args:
+        func: The function to decorate
+
+    Returns:
+        Decorated function with Civis-specific retry logic
+
+    Examples:
+        >>> @retry_civis_operation
+        ... def list_scheduled():
+        ...     return connector._paginate("/jobs", params={"scheduled": True})
+    """
+    return retry(
+        stop=stop_after_attempt(5),
+        wait=_wait_for_civis_rate_limit,
+        retry=retry_if_exception_type(RateLimitError),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )(func)
+
+
 def retry_geocodio_operation(func: Callable) -> Callable:
     """
     Decorator for Geocodio API operations with retry logic.

@@ -1,6 +1,6 @@
 # CCEF Connections
 
-A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zendesk, Zoom, Action Network, Action Builder, Asana, Protect the Vote (PTV), ROI CRM, Geocodio, GitHub, Hex, Resend (transactional email), Tatango (SMS), and Stripe with Civis credential compatibility.
+A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zendesk, Zoom, Action Network, Action Builder, Asana, Protect the Vote (PTV), ROI CRM, Geocodio, GitHub, Hex, Civis Platform, Resend (transactional email), Tatango (SMS), and Stripe with Civis credential compatibility.
 
 ## Features
 
@@ -20,6 +20,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 - **Geocodio**: Address geocoding — forward, reverse, and batch (up to 10,000 per request) for US, Canada, and Mexico
 - **GitHub**: File-write access to a repository via the REST contents API — idempotent commits suitable for "data sync -> JSON file -> GitHub Pages" patterns
 - **Hex**: Notebook/dashboard platform API — projects, full cell CRUD, and run triggering; the transport layer under the `hex-toolkit` library
+- **Civis**: The platform our scheduled jobs run *on* — jobs, container scripts, workflows, runs, logs and credential metadata, plus live API-key expiry; the transport layer under the `civis-ops` project
 - **Email (Resend)**: Transactional email — magic-links, notifications — via Resend's HTTP API
 - **Stripe**: Read access for reconciliation — charges, refunds, disputes, payouts and balance transactions, across **multiple Stripe accounts** from one connector
 - **Tatango**: SMS broadcast platform (Messaging API v2) — subscribers with opt-in bypass flags, per-list custom fields, and webhook registrations
@@ -31,8 +32,8 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 
 Dependencies are split by connector. The base install is lightweight
 (`requests`, `tenacity`, `python-dotenv`) and covers core plus all REST
-connectors: Action Builder, Action Network, Asana, Email (Resend), Geocodio,
-GitHub, HelpScout, Hex, PTV, ROI CRM, Tatango, and Zoom. Heavier connectors are opt-in via extras:
+connectors: Action Builder, Action Network, Asana, Civis, Email (Resend),
+Geocodio, GitHub, HelpScout, Hex, PTV, ROI CRM, Tatango, and Zoom. Heavier connectors are opt-in via extras:
 
 | Extra | Enables | Pulls in |
 |---|---|---|
@@ -94,6 +95,10 @@ ROI_CRM_CREDENTIALS_PASSWORD={"client_id":"your-client-id","client_secret":"your
 GEOCODIO_API_KEY_PASSWORD=your-geocodio-api-key
 GITHUB_PAT_PASSWORD=ghp_XXXXXXXXXXXXXXXX
 HEX_API_KEY_PASSWORD=your-hex-personal-access-token
+# Civis: this one talks TO the platform rather than being injected BY it, and it
+# EXPIRES — 30 days is the maximum grant. CivisConnector.api_key_status() reads
+# the live expiry back from Civis so you don't track the date by hand.
+CIVIS_API_KEY_PASSWORD=your-civis-api-key
 RESEND_API_KEY_PASSWORD=re_XXXXXXXXXXXXXXXX
 # Stripe: ONE VARIABLE PER ACCOUNT, because a key is scoped to one Stripe account.
 # The account name comes from the variable: STRIPE_C3_... -> "c3".
@@ -492,6 +497,66 @@ Higher-level round-trip workflows (YAML export/import via the Hex CLI, git-versi
 per-cell extraction, publish guardrails) live in the `hex-toolkit` library, which
 consumes this connector.
 
+### Civis Platform Example
+
+```python
+from ccef_connections import CivisConnector
+from ccef_connections.connectors.civis import describe_schedule, build_schedule
+
+# API key loaded from CIVIS_API_KEY_PASSWORD
+with CivisConnector() as civis:
+    # ⚠ Check the key's shelf life first. Civis caps API keys at 30 days and
+    # there is no service-account alternative, so every consumer of this
+    # connector eventually dies of expiry — but the platform will tell you when.
+    key = civis.api_key_status()
+    print(f"{key['days_remaining']} days left on {key['name']!r}")
+
+    # The whole live schedule in ONE request: every scheduled job with its
+    # schedule, state and last-run outcome inline. The /scripts listing does
+    # NOT carry `schedule`, so building this from scripts costs one call each.
+    for job in civis.list_scheduled_jobs(mine_only=True):
+        print(job["state"], describe_schedule(job["schedule"]), job["name"])
+
+    # Full config of one container script: repo + ref, image tag, resources,
+    # credential bindings, schedule and its timezone.
+    c = civis.get_container(362699252)
+    print(c["repoHttpUri"], c["repoRef"], c["dockerImageTag"])
+
+    # Why did last night fail? (Judge by run state — see the log-level warning.)
+    runs = civis.list_runs(c["id"], limit=1)
+    for line in civis.run_logs(c["id"], runs[0]["id"], limit=20):
+        print(line["message"])
+
+    # Resource peaks live on the container endpoint only — this is how you size
+    # a dbt job instead of guessing.
+    peaks = [(r["maxMemoryUsage"], r["maxCpuUsage"])
+             for r in civis.container_runs(c["id"], limit=5)]
+
+    # Writes. On a shared tenant, check ownership before mutating anything:
+    # listing endpoints return other TMC member orgs' objects and this key
+    # carries full `manage` permission.
+    if civis.is_mine(c):
+        civis.update_container(c["id"],
+                              required_resources={"cpu": 1024, "memory": 4096,
+                                                  "diskSpace": 2},
+                              schedule=build_schedule(hours=4, minute=15))
+
+    # 674 paths exist; ~40 have typed methods. Discover and call the rest:
+    civis.find_endpoints("workflow execution")
+    civis.request("GET", "/announcements", params={"limit": 1})
+```
+
+Two things worth internalizing before writing against this: **run log `level` is a
+stream tag, not a severity** (Civis marks everything a container wrote to stderr as
+`"error"`, and Python's `logging` writes INFO to stderr — so a clean run's INFO
+lines all arrive as errors; judge by the run's `state`), and **schedules fire in the
+timezone of the account that owns them**, exposed as `timeZone` on the object — not
+UTC, and not a platform default.
+
+Higher-level workflows (the terminal CLI, schedule-truth reconciliation against
+each project's `civis/SCHEDULED_SCRIPTS.md`, job-health reporting) live in the
+`civis-ops` project, which consumes this connector.
+
 ### Protect the Vote (PTV) Example
 
 ```python
@@ -849,6 +914,7 @@ All credentials follow the `{CREDENTIAL_NAME}_PASSWORD` naming convention:
 - `OPENAI_API_KEY_PASSWORD` — API key string
 - `GOOGLE_SHEETS_CREDENTIALS_PASSWORD` — service account JSON
 - `BIGQUERY_CREDENTIALS_PASSWORD` — service account JSON
+- `CIVIS_API_KEY_PASSWORD` — API key string, sent as HTTP Basic with the key as the *username* and an empty password. ⚠ **This one expires** — Civis caps API keys at 30 days with no service-account path, and an expired key 401s exactly like a wrong one. Use `CivisConnector.api_key_status()` to read the live expiry back from the platform rather than tracking the date by hand. Note the naming reads backwards here: everywhere else `{NAME}_PASSWORD` is a secret Civis injects into a container, whereas this is the key that talks *to* Civis.
 - `HELPSCOUT_CREDENTIALS_PASSWORD` — JSON with `app_id` and `app_secret`
 - `ZENDESK_CREDENTIALS_PASSWORD` — JSON with `client_id` and `client_secret` (OAuth2 client_credentials; `client_id` is the OAuth client's *Identifier* slug, not its numeric id). Plus `ZENDESK_SUBDOMAIN` for the instance — a plain env var, not a `_PASSWORD` credential.
 - `ZOOM_CREDENTIALS_PASSWORD` — JSON with `account_id`, `client_id`, and `client_secret`
@@ -888,6 +954,7 @@ Per-service detail:
 - **OpenAI**: 5 retries on 429. The `openai` SDK under langchain also retries 429/5xx/connection errors internally (`max_retries=2`)
 - **Google APIs** (Sheets, Sheets Writer, BigQuery): 5 retries on 429, matched via a predicate rather than an exception type — gspread reports status on `APIError.response.status_code` instead of raising a typed subclass. gspread is the only client library here with no retry of its own; google-cloud-bigquery retries transient errors internally via `DEFAULT_RETRY`
 - **Snowflake**: 5 retries on 429, which in practice leaves very little — deliberately. `snowflake-connector-python` already retries transient network failures internally (as google-cloud-bigquery does), and a **statement timeout must never be retried**: `READER_WH` caps statements at 60s at the *warehouse* level and `PUBLIC` cannot raise it, so a query that timed out will time out again — retrying just spends three more minutes failing and makes a deterministic limit look flaky. IP-allowlist rejections, bad passwords, missing objects and read-only violations are all permanent until a human changes something
+- **Civis**: 5 retries on 429, honoring `Retry-After` plus a 2s buffer but **capped at 60s per wait** — the budget is 1000 requests per *hour*, so an exhausted quota can legitimately mean "come back in forty minutes", and sleeping that long inside a decorator looks like a hang and blows past any surrounding timeout. Bounded attempts, then the error surfaces. Reads are decorated; **writes are single-shot** — a retried `POST /runs` starts a second job run. ⚠ A 401 is *not* retried and usually means the **API key expired** (Civis caps them at 30 days), not a blip
 - **HelpScout**: 5 retries on 429, with auto token refresh on 401
 - **Zendesk**: 5 retries on 429, honoring the exact `Retry-After` plus a 2s buffer. The rate budget is per-*account* and shared with IT's automation, so the connector also self-throttles client-side (default 120 req/min, under the ~400/min ceiling)
 - **Zoom**: 5 retries on 429, with auto token refresh on 401
@@ -979,6 +1046,58 @@ defined over Google Sheets) work as long as the sheet is shared with the service
 - `stream_rows(table_id, rows, timeout=10.0)` - **Webhook-receiver primitive**: one time-bounded streaming insert, **no retries**, no `get_table` round-trip. Raises `WriteError` fast so a receiver can return non-2xx and let the *sender's* retries own durability. Use this inside request handlers — an unbounded, retry-wrapped insert can wedge a request thread for minutes (2026-08-07 `action_network_webhooks` incident: hung inserts ate the whole thread pool)
 - `load_dataframe(df, table_id, if_exists='append')` - Load DataFrame
 - `execute_dml(sql)` - Execute UPDATE/DELETE statements
+
+### CivisConnector
+
+Thin REST client for the Civis Platform API — the platform CCEF's scheduled jobs run *on*, rather than a system they talk to. Covers jobs, container scripts, workflows, runs, logs and credential metadata. Transport only: policy (which jobs belong to which project, whether a manifest matches reality) lives in the consuming `civis-ops` project.
+
+**Credential:** `CIVIS_API_KEY_PASSWORD` (or pass `credential_name="..."`). Sent as HTTP Basic with the key as the *username*, password empty. Base URL: `https://api.civisanalytics.com`.
+
+**Four things to know before calling it:**
+
+1. ⚠ **The key expires — 30 days is the longest grant, and there is no service-account path.** A 401 means "expired" far more often than "misconfigured". `api_key_status()` reads the live `expiresAt` back from the platform; anything scheduled should surface days-remaining where a human sees it.
+2. **The budget is 1000 requests/hour.** `rate_limit()` returns the last observed `{"limit", "remaining"}`. A "list every script, then GET each detail" sweep over CC's 666 scripts would exhaust it — use `list_jobs()`, which carries `schedule`, `state` and `lastRun` inline.
+3. **The tenant is shared.** CC is one member org of The Movement Cooperative; the tenant holds 84 users and its admins are TMC staff. Listing endpoints return other members' objects — call `is_mine(obj)` before anything write-shaped.
+4. **Run log `level` is a stream tag, not a severity.** Civis marks anything written to stderr as `"error"`, and Python's `logging` writes INFO to stderr, so a clean run's INFO lines all come back as errors. Judge a run by its `state`.
+
+Identity, budget and discovery:
+
+- `whoami(refresh=False)` / `api_key_status(include_inactive=False)` - Authenticated user; live key expiry (with `days_remaining`, `key_count`, and `ambiguous` when more than one active key makes the answer uncertain).
+- `is_mine(obj)` - Whether an object was authored by the authenticated user.
+- `rate_limit()` - Last observed hourly budget.
+- `spec(refresh=False)` / `find_endpoints(needle)` - The platform's own OpenAPI spec (674 paths across 41 resources) and a search over it.
+- `request(method, path, params=None, json_body=None)` - Escape hatch for any endpoint with no typed method here. No retry, no guardrails.
+- `search(query, limit=None, **filters)` - Platform-wide object search.
+
+Jobs, runs and logs (reads):
+
+- `list_jobs(scheduled=None, state=None, type=None, author=None, archived=None, q=None, ...)` - The cheap listing; the only one carrying `schedule`/`state`/`lastRun` inline.
+- `list_scheduled_jobs(mine_only=False)` - Every scheduled job in one call. For a full picture, pair with `list_workflows(scheduled=True)` — a workflow carries the schedule where its member jobs don't.
+- `get_job(job_id)`, `job_children`, `job_parents`, `job_workflows` - Single job and its relationships.
+- `list_runs(job_id, limit=None, ...)` vs `container_runs(script_id, limit=None, ...)` - Both list runs, but only the container endpoint returns `maxMemoryUsage` / `maxCpuUsage`. Those peaks are the whole basis for sizing a job, so the two are deliberately separate.
+- `get_run(job_id, run_id)`, `run_logs(job_id, run_id, last_id=None, limit=None)`, `run_outputs(job_id, run_id, limit=None)`.
+- `list_scripts(...)`, `script_types()`, `get_container(script_id)`, `container_dependencies`, `container_shares`.
+- `list_workflows(...)`, `get_workflow(id)`, `list_executions`, `get_execution`, `get_execution_task`.
+- `list_credentials(...)`, `get_credential(id)`, `credential_types()`, `credential_dependencies(id)` - Metadata only; secret values are never returned.
+- `list_projects`, `list_databases`, `list_remote_hosts`, `list_users`, `organization_admins`, `list_groups`, `list_templates`, `usage`.
+
+Writes — **single-shot, never retried** (a retried `POST /runs` starts a second job run):
+
+- `run_job(job_id)`, `cancel_run(job_id, run_id)`.
+- `create_container(name, **fields)`, `update_container(script_id, **fields)`, `replace_container`, `clone_container(script_id, clone_schedule=False, clone_triggers=False, clone_notifications=False)`, `delete_container`.
+- `create_workflow(name, definition, **fields)`, `update_workflow`, `replace_workflow`, `clone_workflow`, `execute_workflow(workflow_id, target_task=None)`, `cancel_execution`, `retry_execution`, `resume_execution`.
+- `create_credential(type, name, password, username=None, **fields)`, `update_credential(id, **fields)` (the rotation path — keeps the id, so every job binding survives), `delete_credential(id)`.
+- `set_job_archived(job_id, archived=True)` / `set_workflow_archived(...)` - **Prefer these over `delete_container`.** Archiving is reversible and keeps run history, and Civis itself deprecates DELETE on containers in favour of archiving.
+
+⚠ **Never PATCH `dockerCommand`.** Every CCEF job is GitHub-backed: Civis clones the project repo into `app/` and the body is just `bash app/civis/<script>.sh`. The committed `.sh` is the real job — change behaviour by pushing to the repo, not through the API.
+
+Schedule helpers (module-level, in `ccef_connections.connectors.civis`):
+
+- `describe_schedule(schedule, time_zone=None)` - Render a schedule dict as `"daily 06:45 America/New_York"`, `"MoWeFr 04:30, 16:30"`, `"monthly day 1 03:00"`, `"4x/hour"`, or `"not scheduled"`. Handles the two forms that are easy to miss: `scheduledRunsPerHour` (interval) and `scheduledDaysOfMonth` (monthly, where `scheduledDays` is empty).
+- `build_schedule(hours, minute=0, days=None, days_of_month=None, runs_per_hour=None)` - Build one to send. Weekdays are 0=Sunday.
+- `UNSCHEDULED` - Pass as `schedule=` to switch a schedule off without deleting it.
+
+Schedules fire in the **owning account's timezone**, exposed as `timeZone` on the object (CC's jobs: `America/New_York`) — not UTC and not a platform default. Pass it to `describe_schedule` so the output is unambiguous.
 
 ### HelpScoutConnector
 
@@ -1573,7 +1692,7 @@ for conv in conversations:
 
 ## Testing
 
-The library has 1,376 unit tests covering the core modules and **every** connector — each one has a dedicated test file. The full suite runs in roughly ten seconds; every test mocks its transport, so no individual test should take measurable time.
+The library has 1,473 unit tests covering the core modules and **every** connector — each one has a dedicated test file. The full suite runs in roughly ten seconds; every test mocks its transport, so no individual test should take measurable time.
 
 **Retry paths must never actually sleep.** The service decorators carry real
 exponential backoff, so a test that drives a decorated method to exhaust its retries
@@ -1613,6 +1732,7 @@ pytest tests/test_sheets.py -v
 pytest tests/test_sheets_writer.py -v
 pytest tests/test_ptv.py -v
 pytest tests/test_snowflake.py -v
+pytest tests/test_civis.py -v
 pytest tests/test_roi_crm.py -v
 pytest tests/test_github.py -v
 pytest tests/test_hex.py -v
@@ -1703,4 +1823,4 @@ For issues or questions:
 
 ## Version
 
-Current version: 0.10.0
+Current version: 0.11.0

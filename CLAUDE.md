@@ -1,6 +1,79 @@
 # CCEF Connections
 
-Reusable Python library providing unified connection management for CCEF data integrations. Connectors: Airtable, OpenAI/ChatGPT, Google Sheets, BigQuery, Snowflake, HelpScout, Zendesk, Zoom, Action Network, Action Builder, Asana, PTV, ROI CRM, Stripe, Geocodio, GitHub, Hex, Email (Resend), Tatango (SMS). Uses Civis-compatible {CREDENTIAL_NAME}_PASSWORD env var pattern.
+Reusable Python library providing unified connection management for CCEF data integrations. Connectors: Airtable, OpenAI/ChatGPT, Google Sheets, BigQuery, Snowflake, HelpScout, Zendesk, Zoom, Action Network, Action Builder, Asana, PTV, ROI CRM, Stripe, Geocodio, GitHub, Hex, Civis Platform, Email (Resend), Tatango (SMS). Uses Civis-compatible {CREDENTIAL_NAME}_PASSWORD env var pattern.
+
+## Civis connector — the platform we run *on*
+
+`CivisConnector` is the odd one out: every other connector reaches a system our
+Civis jobs talk *to*, and this one talks to Civis itself. Consequences worth
+knowing before touching it (all verified live 2026-08-20):
+
+**The credential expires, and that is the normal end-state.** Civis caps API keys
+at 30 days and offers no service-account path, so anything built on this
+connector dies on a schedule. A 401 therefore means "expired" far more often than
+"misconfigured", which is why `_raw` says so in the error text. Don't add 401 to a
+retry predicate. `api_key_status()` reads the live `expiresAt` back from
+`GET /users/{id}/api_keys` — use it rather than tracking the date in config.
+Beware the two-key case: a long-lived account accumulates dead keys (the real
+account had a 2020 one next to the live one), so the method considers only active,
+unexpired keys, picks the soonest expiry, and sets `ambiguous` when it can't be
+sure which key authenticated the request.
+
+**`GET /jobs` is the cheap listing; `/scripts` is the expensive one.** Only
+`/jobs` carries `schedule`, `state` and `lastRun` inline, so
+`list_jobs(scheduled=True)` answers "what runs on Civis and did it work" in a
+single request. Building the same picture from `/scripts` costs one GET per
+script, and CC's own user has 666 of them against a **1000 request/hour** budget.
+A full picture is `list_scheduled_jobs()` **plus** `list_workflows(scheduled=True)`
+— a workflow carries the schedule and its member jobs usually don't.
+
+**`limit` means items, not page size.** `_paginate` treats it as a total cap and
+derives page size from it. This was a bug first: `list_runs(job, limit=3)`
+returned all 30 runs of a daily job because `limit` was being passed straight
+through as page size while pagination kept walking.
+
+**Resource peaks are only on the container endpoint.** `/jobs/{id}/runs` returns
+a minimal run object; `/scripts/containers/{id}/runs` adds `maxMemoryUsage` and
+`maxCpuUsage`. That's `container_runs()` vs `list_runs()`, and the peaks are the
+entire basis for sizing a dbt job — don't "simplify" the two into one.
+
+**Run log `level` is a stream tag, not a severity.** Civis labels anything a
+container wrote to stderr as `"error"`, and Python's `logging` writes INFO to
+stderr, so a perfectly clean run's INFO lines all come back as errors. Judge a
+run by its `state`. Any code that counts `level == "error"` to decide health is
+wrong.
+
+**Schedules fire in the owning account's timezone**, exposed as `timeZone` on the
+object (CC's jobs: `America/New_York`). Not UTC, not a platform default. Always
+render a schedule with its zone — `describe_schedule(sched, tz)` takes it for
+exactly this reason. `describe_schedule` also handles the two forms that are easy
+to miss: `scheduledRunsPerHour` (interval) and `scheduledDaysOfMonth` (monthly,
+where `scheduledDays` is empty — that's how CC's "AN/AB Tables Monthly Audit"
+went missing from the schedule rollup).
+
+**Full CRUD, deliberately, on a platform we don't own.** This was an explicit
+call by Rob, made knowing the key holds `manage` and the tenant is shared with 84
+users across many TMC member orgs whose admins are TMC staff, not ours. So the
+guardrails are conventions, not walls, and they matter:
+
+- `is_mine(obj)` before any write — listing endpoints return neighbours' objects.
+- `set_job_archived()` / `set_workflow_archived()` over `delete_container()`.
+  Archiving is reversible and keeps run history; Civis itself deprecates DELETE
+  on containers in favour of the archive endpoints.
+- **Never PATCH `dockerCommand`.** Every CCEF job is GitHub-backed: Civis clones
+  the project repo into `app/` and the body is `bash app/civis/<script>.sh`. The
+  committed `.sh` is the real job — change behaviour by pushing, not by API.
+- `clone_*` defaults all three clone flags to False, so a clone can't silently
+  start running on the original's schedule.
+- `test_civis.py::TestSurface::test_write_surface_is_pinned` pins the mutator
+  inventory. It doesn't restrict what can be added; it means nobody widens the
+  blast radius by accident.
+
+**Stray-package trap.** An empty `civis/resources/` directory in a Python install
+root makes `import civis` succeed as an empty namespace package —
+`civis.APIClient` then raises `AttributeError`. This connector doesn't use the
+official client at all, so it's immune, but that's the explanation when someone
+else's script fails that way.
 
 ## Retry predicates: 429 only
 

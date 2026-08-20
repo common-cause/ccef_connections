@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from .airtable import AirtableConnector
     from .asana import AsanaConnector
     from .bigquery import BigQueryConnector
+    from .civis import CivisConnector
     from .email_connector import EmailConnector
     from .geocodio import GeocodioConnector
     from .github import GitHubConnector
@@ -38,6 +39,7 @@ _LAZY_IMPORTS = {
     "AirtableConnector": ("airtable", "airtable"),
     "AsanaConnector": ("asana", None),
     "BigQueryConnector": ("bigquery", "bigquery"),
+    "CivisConnector": ("civis", None),
     "EmailConnector": ("email_connector", None),
     "GeocodioConnector": ("geocodio", None),
     "GitHubConnector": ("github", None),

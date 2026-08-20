@@ -356,6 +356,33 @@ class CredentialManager:
         """
         return str(self.get_credential(credential_name))
 
+    def get_civis_api_key(self, credential_name: str = "CIVIS_API_KEY") -> str:
+        """
+        Get a Civis Platform API key.
+
+        ⚠ Unlike every other credential here, this one has a hard shelf life:
+        Civis caps API keys at 30 days and offers no service-account path, so
+        the key WILL expire and an expired key 401s exactly like a wrong one.
+        ``CivisConnector.api_key_status()`` reads the live expiry back from the
+        platform — use it rather than tracking the date by hand.
+
+        Note the direction of the naming convention here. Everywhere else,
+        ``{NAME}_PASSWORD`` means "a secret that Civis will inject into a
+        container". This one is the key that talks *to* Civis, and it carries
+        the same suffix purely for consistency with the rest of the fleet.
+
+        Args:
+            credential_name: Name of the credential (default: "CIVIS_API_KEY").
+                The env var read is {credential_name}_PASSWORD.
+
+        Returns:
+            The API key as a string
+
+        Raises:
+            CredentialError: If the credential is missing
+        """
+        return str(self.get_credential(credential_name))
+
     def get_roi_crm_credentials(self) -> Dict[str, Any]:
         """
         Get ROI CRM OAuth2 Client Credentials.
