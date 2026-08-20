@@ -2,7 +2,7 @@
 CCEF Connections - Reusable connection library for CCEF data integrations.
 
 This library provides unified connection management for Airtable, OpenAI,
-Google Sheets, and BigQuery with Civis credential compatibility.
+Google Sheets, BigQuery and Snowflake with Civis credential compatibility.
 
 Connectors are imported lazily (PEP 562): importing this package only loads
 the lightweight core. Connectors whose third-party dependencies live behind
@@ -42,12 +42,13 @@ if TYPE_CHECKING:
     from .connectors.roi_crm import ROICRMConnector
     from .connectors.sheets import SheetsConnector
     from .connectors.sheets_writer import SheetsWriterConnector
+    from .connectors.snowflake import SnowflakeConnector
     from .connectors.stripe import StripeConnector
     from .connectors.tatango import TatangoConnector
     from .connectors.zendesk import ZendeskConnector
     from .connectors.zoom import ZoomConnector
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 # Lazy attribute -> (module, required extra or None).
 # Connectors with extra=None need only the base install (requests).
@@ -67,6 +68,7 @@ _LAZY_IMPORTS = {
     "ROICRMConnector": ("ccef_connections.connectors.roi_crm", None),
     "SheetsConnector": ("ccef_connections.connectors.sheets", "sheets"),
     "SheetsWriterConnector": ("ccef_connections.connectors.sheets_writer", "sheets"),
+    "SnowflakeConnector": ("ccef_connections.connectors.snowflake", "snowflake"),
     "StripeConnector": ("ccef_connections.connectors.stripe", None),
     "TatangoConnector": ("ccef_connections.connectors.tatango", None),
     "ZendeskConnector": ("ccef_connections.connectors.zendesk", None),
@@ -92,6 +94,7 @@ __all__ = [
     "ROICRMConnector",
     "SheetsConnector",
     "SheetsWriterConnector",
+    "SnowflakeConnector",
     "StripeConnector",
     "TatangoConnector",
     "ZendeskConnector",

@@ -24,6 +24,7 @@ from ccef_connections.core.retry import (
     retry_google_operation,
     retry_helpscout_operation,
     retry_openai_operation,
+    retry_snowflake_operation,
     retry_with_backoff,
     retry_zoom_operation,
 )
@@ -476,6 +477,7 @@ SERVICE_DECORATORS = [
     ("helpscout", retry_helpscout_operation),
     ("zoom", retry_zoom_operation),
     ("action_network", retry_action_network_operation),
+    ("snowflake", retry_snowflake_operation),
 ]
 
 SERVICE_IDS = [name for name, _ in SERVICE_DECORATORS]

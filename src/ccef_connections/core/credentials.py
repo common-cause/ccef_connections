@@ -552,6 +552,44 @@ class CredentialManager:
         return {name: rec["key"]
                 for name, rec in self.get_stripe_accounts().items()}
 
+    def get_snowflake_credentials(self) -> Dict[str, str]:
+        """
+        Get Snowflake connection settings and password.
+
+        Snowflake is the one connector here that needs a handful of non-secret
+        connection settings alongside its password, and the established layout
+        across every CCEF project keeps them as separate variables rather than one
+        JSON blob — which is also what lets ``--reseed-credentials`` rotate the
+        password without touching the rest:
+
+            SNOWFLAKE_ACCOUNT=gptulaf-cmnc_reader
+            SNOWFLAKE_USER=...
+            SNOWFLAKE_ROLE=PUBLIC
+            SNOWFLAKE_WAREHOUSE=READER_WH
+            SNOWFLAKE_DATABASE=CMNC_DATA
+            SNOWFLAKE_SCHEMA=ROI
+            SNOWFLAKE_CREDENTIALS_PASSWORD=...
+
+        Only the password is required here. The connector applies defaults and
+        decides which of the rest it cannot proceed without, so that the error names
+        the specific missing setting.
+
+        Returns:
+            Dict with 'password' plus whichever of 'account', 'user', 'role',
+            'warehouse', 'database' and 'schema' are set
+
+        Raises:
+            CredentialError: If SNOWFLAKE_CREDENTIALS_PASSWORD is missing
+        """
+        settings: Dict[str, str] = {
+            "password": str(self.get_credential("SNOWFLAKE_CREDENTIALS")),
+        }
+        for key in ("account", "user", "role", "warehouse", "database", "schema"):
+            value = os.getenv(f"SNOWFLAKE_{key.upper()}")
+            if value:
+                settings[key] = value
+        return settings
+
     def get_tatango_credentials(self) -> Dict[str, str]:
         """
         Get Tatango (MomoGood) Messaging API v2 credentials.

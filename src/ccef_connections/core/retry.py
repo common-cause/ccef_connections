@@ -690,6 +690,43 @@ def retry_tatango_operation(func: Callable) -> Callable:
     )(func)
 
 
+def retry_snowflake_operation(func: Callable) -> Callable:
+    """
+    Decorator for Snowflake operations with retry logic.
+
+    Retries rate limiting and nothing else, per the module policy above. For
+    Snowflake that leaves very little, and deliberately so:
+
+    * ``snowflake-connector-python`` already retries transient network failures
+      internally, the same way ``google-cloud-bigquery`` does — so a transport error
+      that reaches us has already been retried and should surface.
+    * ⚠ **A statement timeout must never be retried.** ``READER_WH`` caps statements
+      at 60 seconds at the *warehouse* level and ``PUBLIC`` cannot raise it, so a
+      query that timed out will time out again. Retrying spends three more minutes
+      failing and makes a deterministic limit look like a flaky one.
+    * An IP-allowlist rejection, a bad password, a missing object and a read-only
+      violation are all permanent until a human changes something.
+
+    Args:
+        func: The function to decorate
+
+    Returns:
+        Decorated function with Snowflake retry logic
+
+    Examples:
+        >>> @retry_snowflake_operation
+        ... def run(sql):
+        ...     return cursor.execute(sql)
+    """
+    return retry(
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=2.0, min=1.0, max=60.0),
+        retry=retry_if_exception_type(RateLimitError),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )(func)
+
+
 def retry_geocodio_operation(func: Callable) -> Callable:
     """
     Decorator for Geocodio API operations with retry logic.

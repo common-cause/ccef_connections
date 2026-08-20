@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from .roi_crm import ROICRMConnector
     from .sheets import SheetsConnector
     from .sheets_writer import SheetsWriterConnector
+    from .snowflake import SnowflakeConnector
     from .stripe import StripeConnector
     from .tatango import TatangoConnector
     from .zendesk import ZendeskConnector
@@ -47,6 +48,7 @@ _LAZY_IMPORTS = {
     "ROICRMConnector": ("roi_crm", None),
     "SheetsConnector": ("sheets", "sheets"),
     "SheetsWriterConnector": ("sheets_writer", "sheets"),
+    "SnowflakeConnector": ("snowflake", "snowflake"),
     "StripeConnector": ("stripe", None),
     "TatangoConnector": ("tatango", None),
     "ZendeskConnector": ("zendesk", None),

@@ -8,6 +8,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 - **OpenAI/ChatGPT**: Langchain integration with structured outputs
 - **Google Sheets**: Read-only configuration management (`SheetsConnector`) plus read/write spreadsheet publishing (`SheetsWriterConnector`)
 - **BigQuery**: Full read/write data warehouse operations
+- **Snowflake**: Read access to the `CMNC_DATA` replica — ROI CRM data, the Unite data model, and the Fivetran mirrors; `(columns, rows)`, dicts or DataFrames
 - **HelpScout**: Automated email processing — read conversations, reply, add notes, close
 - **Zendesk**: Read access to ticketing and configuration objects, ticket create/update, and a deliberately narrow set of single-object config writes for reviewed config-as-code
 - **Zoom**: Meeting and webinar attendee retrieval — participants, registrants, absentees
@@ -39,7 +40,8 @@ GitHub, HelpScout, Hex, PTV, ROI CRM, Tatango, and Zoom. Heavier connectors are 
 | `sheets` | SheetsConnector, SheetsWriterConnector, ConfigManager | gspread, google-api-python-client, google-auth |
 | `bigquery` | BigQueryConnector | google-cloud-bigquery, db-dtypes |
 | `openai` | OpenAIConnector | langchain, langchain-openai, pydantic |
-| `pandas` | DataFrame methods on BigQueryConnector | pandas |
+| `snowflake` | SnowflakeConnector | snowflake-connector-python |
+| `pandas` | DataFrame methods on BigQueryConnector, SnowflakeConnector | pandas |
 | `all` | everything above | |
 
 Connectors are imported lazily — importing the package never loads
@@ -99,6 +101,15 @@ STRIPE_C3_CREDENTIALS_PASSWORD={"api_name":"stripeclaudec3","key":"rk_live_XXXX"
 STRIPE_C4_CREDENTIALS_PASSWORD={"api_name":"stripeclaudec4","key":"rk_live_XXXX"}
 # A combined map, or a single bare key (registered as "default"), also work:
 # STRIPE_CREDENTIALS_PASSWORD={"c3":"rk_live_XXXX","c4":"rk_live_XXXX"}
+# Snowflake: connection settings as separate variables, password on its own, so the
+# password can be rotated without touching the rest. ROLE has no default — see below.
+SNOWFLAKE_ACCOUNT=your-account
+SNOWFLAKE_USER=YOURUSER
+SNOWFLAKE_ROLE=PUBLIC
+SNOWFLAKE_WAREHOUSE=READER_WH
+SNOWFLAKE_DATABASE=CMNC_DATA
+SNOWFLAKE_SCHEMA=ROI
+SNOWFLAKE_CREDENTIALS_PASSWORD=your-snowflake-password
 TATANGO_LOGIN_EMAIL_PASSWORD=api-user@yourorg.org
 TATANGO_API_KEY_PASSWORD=your-tatango-api-key
 RESEND_FROM_EMAIL=Your Name <auth@mail.commoncause.org>  # optional default sender
@@ -201,6 +212,51 @@ bq.insert_rows('dataset.users', rows)
 new_df = pd.DataFrame({'col1': [1, 2, 3], 'col2': ['a', 'b', 'c']})
 bq.load_dataframe(new_df, 'dataset.table', if_exists='append')
 ```
+
+### Snowflake Example
+
+```python
+from ccef_connections import SnowflakeConnector
+
+# Settings come from the SNOWFLAKE_* environment variables; override any of them
+connector = SnowflakeConnector()
+
+# query() returns (columns, rows) — the same shape as the sfquery.py shim it replaces
+cols, rows = connector.query("SELECT CURRENT_ROLE(), CURRENT_WAREHOUSE()")
+
+# Or dicts / a DataFrame
+for row in connector.query_dicts("SELECT ROI_ID, FULL_NAME FROM ACCOUNT_PROFILE LIMIT 5"):
+    print(row["ROI_ID"], row["FULL_NAME"])
+
+df = connector.query_to_dataframe("SELECT COUNT(*) AS N FROM FACT_TRANSACTION")
+
+# Point one connector at a different schema (e.g. the Unite data model)
+unite = SnowflakeConnector(schema="DATA_MODEL")
+print(unite.list_tables()[:5])
+
+# Closes the session on exit
+with SnowflakeConnector() as conn:
+    cols, rows = conn.query("SELECT 1")
+
+# config is safe to print — the password is redacted
+print(connector.config)
+```
+
+**Two things worth knowing before writing a heavy query.**
+
+`READER_WH` enforces a **60-second statement timeout at the warehouse level**. It
+overrides any session setting and the `PUBLIC` role cannot raise it, so the `timeout`
+argument can only ever *lower* the ceiling. A big join has to pull narrow slices and
+combine them client-side, or be pre-aggregated elsewhere — the account is read-only, so
+`CREATE TEMPORARY TABLE` is not available either.
+
+`SNOWFLAKE_ROLE` has **no default**, deliberately. An unset role lands on the account
+default, which may not see every schema — and a schema a role cannot see is reported as a
+missing object rather than a permission error, which sends you hunting the wrong bug. The
+connector translates that case, along with the IP-allowlist rejection (which otherwise
+reads like a bad password) and the warehouse timeout, into errors that say what actually
+happened.
+
 
 ### HelpScout Example
 
