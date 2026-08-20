@@ -1047,6 +1047,39 @@ defined over Google Sheets) work as long as the sheet is shared with the service
 - `load_dataframe(df, table_id, if_exists='append')` - Load DataFrame
 - `execute_dml(sql)` - Execute UPDATE/DELETE statements
 
+### SnowflakeConnector
+
+Read access to the CCEF Snowflake replica (`CMNC_DATA`) — ROI Solutions CRM data, the Unite data model, and Fivetran mirrors of the BigQuery datasets. Replaces the `scripts/sfquery.py` shim that had been copied into five separate projects (`financial-reconciliation`, `snowflake-research`, `roi-campaign-sources`, `major-donor-briefs`, `unite-dashboards`), two of which had already diverged.
+
+**Requires the `snowflake` extra:** `pip install "ccef-connections[snowflake]"`.
+
+**Credential:** the password comes from `SNOWFLAKE_CREDENTIALS_PASSWORD`. Unlike every other connector here, Snowflake needs six further connection settings, each resolved as **explicit keyword > environment variable > built-in default**:
+
+| Setting | Env var | Default |
+|---|---|---|
+| `account` | `SNOWFLAKE_ACCOUNT` | *required* |
+| `user` | `SNOWFLAKE_USER` | *required* |
+| `role` | `SNOWFLAKE_ROLE` | *required — deliberately no default* |
+| `warehouse` | `SNOWFLAKE_WAREHOUSE` | `READER_WH` |
+| `database` | `SNOWFLAKE_DATABASE` | `CMNC_DATA` |
+| `schema` | `SNOWFLAKE_SCHEMA` | `ROI` |
+
+Reading from the environment is what lets this run on Civis, which injects credentials as env vars with no `.env` on disk.
+
+⚠ **`role` has no default on purpose.** An unset role silently lands on the account default, which may not see the `BQ_*` mirror schemas — and an invisible schema is reported as *"object does not exist"*, not a permission error, which sends you hunting the wrong bug.
+
+⚠ **`READER_WH` enforces a 60-second statement timeout at the *warehouse* level.** That overrides any session setting, and the `PUBLIC` role cannot raise it — so the `timeout` argument can only ever *lower* the limit, never raise it. The shim this replaces hardcoded `timeout=900` and had no effect for months. Anything needing a bigger join must pull narrow slices and combine them client-side, or be pre-aggregated elsewhere.
+
+⚠ **Read-only.** The service account cannot write, so there are no write methods here and `CREATE TEMPORARY TABLE` fails — which is why client-side joins are the pattern rather than staging tables.
+
+- `query(sql, params=None, timeout=None)` - Run a query. Returns `(columns, rows)` — a tuple of column names and row tuples. That shape deliberately matches the old `sfquery.run()`, so the five projects migrate by changing an import rather than rewriting callers.
+- `query_dicts(sql, params=None, timeout=None)` - Same, as a list of dicts keyed by column name.
+- `query_to_dataframe(sql, params=None, timeout=None)` - Same, as a pandas DataFrame. Needs the `pandas` extra.
+- `list_tables(schema=None)` - Sorted table and view names for a schema, defaulting to the connector's own.
+- `config` *(property)* - The resolved connection settings with the password replaced by `"***"`. Safe to log, and the fastest way to see what the connector actually resolved when a query hits the wrong schema.
+
+**Error translation.** Snowflake reports several very different problems in ways that all read like a bad credential, so the connector translates them with hints rather than passing the driver text through: the **IP allowlist** (the replica is allowlisted, so a new network looks like an auth failure when the credential is fine), the **60s statement timeout**, the **read-only** violation (errno `370001`), and *"does not exist or not authorized"* — which usually means the role can't see the schema rather than that the object is missing.
+
 ### CivisConnector
 
 Thin REST client for the Civis Platform API — the platform CCEF's scheduled jobs run *on*, rather than a system they talk to. Covers jobs, container scripts, workflows, runs, logs and credential metadata. Transport only: policy (which jobs belong to which project, whether a manifest matches reality) lives in the consuming `civis-ops` project.
@@ -1469,6 +1502,38 @@ Sends transactional email (magic-links, notifications) via Resend's HTTP API. No
 **Auth:** Bearer-token API key on every request. Base URL: `https://api.resend.com`. Retries on 429 (rate limit) with exponential backoff; 4xx/5xx surface immediately.
 
 - `send(to, subject, *, html=None, text=None, from_addr=None, reply_to=None)` - Send an email. `to` and `reply_to` accept a single address or a list. `from_addr` falls back to `RESEND_FROM_EMAIL`. Requires at least one of `html`/`text`. Returns Resend's response dict (includes the message `id`). Raises `ValueError` if no sender resolves or no body is given.
+
+### StripeConnector
+
+Read access to Stripe charges, refunds, disputes, payouts and balance transactions, for reconciliation against the CRM and against bank statements. Direct HTTP via `requests` — no `stripe` SDK, so it needs only the base install. Base URL: `https://api.stripe.com/v1`.
+
+**Credentials: one variable per account**, because a Stripe key is scoped to exactly one account. The account name is derived from the variable name (`STRIPE_C3_CREDENTIALS_PASSWORD` → `"c3"`, `STRIPE_STORE_TX_CREDENTIALS_PASSWORD` → `"store_tx"`). Each value is either a bare key or JSON carrying an `api_name` alongside it:
+
+```bash
+STRIPE_C3_CREDENTIALS_PASSWORD={"api_name":"stripeclaudec3","key":"rk_live_XXXX"}
+STRIPE_C4_CREDENTIALS_PASSWORD={"api_name":"stripeclaudec4","key":"rk_live_XXXX"}
+
+# A combined map also works, as does a single bare key (registered as "default"):
+STRIPE_CREDENTIALS_PASSWORD={"c3":"rk_live_XXXX","c4":"rk_live_XXXX"}
+```
+
+⚠ **Multi-account by design.** CCEF runs several Stripe accounts side by side (C3/Action Network, C4 main, the online stores). One connector instance holds a *map* of account name → key and every method takes `account=`, which is what lets a caller sweep all of them in one pass. With exactly one account configured, `account=` may be omitted; with more than one it is required, and omitting it raises rather than guessing.
+
+⚠ **`fee` and `net` live on balance transactions, not on charges.** For any reconciliation against a bank statement use `list_balance_transactions()` — a charge tells you the gross, only the balance transaction tells you what Stripe kept and what actually moved. This is the single most common way to get a Stripe reconciliation wrong.
+
+⚠ **Date filters resolve in UTC**, because that is the clock Stripe stamps `created` in. Pass a `date` and let the connector resolve the day boundary (it takes 23:59:59 for the end of a range so the whole day is included); passing a local-midnight naive `datetime` silently shifts the window by your UTC offset.
+
+- `accounts` *(property)* - Configured account names.
+- `api_name(account=None)` - The `api_name` recorded alongside that account's key, for answering "which key is this?" against the Stripe dashboard.
+- `get_account(account=None)` - The Stripe account object. The `id` is the authoritative answer to which account a key really belongs to.
+- `list_charges(start=None, end=None, account=None, limit=None)` - Gross donation activity; the "did this reach the CRM?" query.
+- `list_refunds(...)` / `list_disputes(...)` - Money going back out; the "what needs reversing in the CRM?" query.
+- `list_payouts(...)` - Transfers to the bank.
+- `list_balance_transactions(start=None, end=None, account=None, types=None, payout=None, expand_source=False, limit=None)` - The reconciliation endpoint: the only one carrying `fee` and `net`. Pass `payout=` to itemise a single bank deposit, `types=` to narrow to e.g. charges only, and `expand_source=True` to inline the originating object.
+
+All list methods accept `start`/`end` as unix seconds, a `date`, or a `datetime`, and page automatically (Stripe caps `limit` at 100 per request).
+
+**Retry:** 429 only, waiting as long as Stripe's `Retry-After` asks plus a 1s buffer. 401/403 — including a missing restricted-key scope — surface immediately, since those are fixed in the Stripe dashboard rather than by retrying.
 
 ### TatangoConnector
 
