@@ -47,7 +47,7 @@ if TYPE_CHECKING:
     from .connectors.zendesk import ZendeskConnector
     from .connectors.zoom import ZoomConnector
 
-__version__ = "0.7.1"
+__version__ = "0.8.0"
 
 # Lazy attribute -> (module, required extra or None).
 # Connectors with extra=None need only the base install (requests).

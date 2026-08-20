@@ -1516,7 +1516,7 @@ for conv in conversations:
 
 ## Testing
 
-The library has 1,207 unit tests covering the connectors and core modules (every connector except `PTVConnector` and `SheetsWriterConnector`, which do not yet have dedicated test files). The full suite runs in well under 10 seconds — every test mocks its transport, so nothing should take measurable time.
+The library has 1,277 unit tests covering the connectors and core modules — every connector except `PTVConnector`, which does not yet have a dedicated test file. The full suite runs in well under 10 seconds; every test mocks its transport, so nothing should take measurable time.
 
 **Retry paths must never actually sleep.** The service decorators carry real
 exponential backoff, so a test that drives a decorated method to exhaust its retries
@@ -1553,6 +1553,7 @@ pytest tests/test_airtable.py -v
 pytest tests/test_bigquery.py -v
 pytest tests/test_openai.py -v
 pytest tests/test_sheets.py -v
+pytest tests/test_sheets_writer.py -v
 pytest tests/test_roi_crm.py -v
 pytest tests/test_github.py -v
 pytest tests/test_hex.py -v
@@ -1643,4 +1644,4 @@ For issues or questions:
 
 ## Version
 
-Current version: 0.7.1
+Current version: 0.8.0
