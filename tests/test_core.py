@@ -1,7 +1,7 @@
 """Tests for the core modules: exceptions, base connection, credentials, and retry."""
 
 import json
-from unittest.mock import MagicMock, patch, patch as _patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -18,11 +18,14 @@ from ccef_connections.exceptions import (
 from ccef_connections.core.base import BaseConnection
 from ccef_connections.core.credentials import CredentialManager
 from ccef_connections.core.retry import (
+    _is_google_rate_limit,
+    retry_action_network_operation,
     retry_airtable_operation,
     retry_google_operation,
     retry_helpscout_operation,
     retry_openai_operation,
     retry_with_backoff,
+    retry_zoom_operation,
 )
 
 
@@ -442,132 +445,6 @@ class TestRetry:
 
         assert call_count == 1
 
-    # ── Service-specific decorators ──────────────────────────────────
-
-    def test_retry_airtable_operation_retries_and_succeeds(self):
-        """retry_airtable_operation retries on failure and eventually succeeds."""
-        call_count = 0
-
-        @retry_airtable_operation
-        def airtable_call():
-            nonlocal call_count
-            call_count += 1
-            if call_count < 3:
-                raise RateLimitError("rate limited", retry_after=1)
-            return "airtable_ok"
-
-        result = airtable_call()
-        assert result == "airtable_ok"
-        assert call_count == 3
-
-    def test_retry_airtable_operation_reraises_after_max(self):
-        """retry_airtable_operation reraises after 5 failed attempts."""
-        call_count = 0
-
-        @retry_airtable_operation
-        def always_fails():
-            nonlocal call_count
-            call_count += 1
-            raise ConnectionError("airtable down")
-
-        with pytest.raises(ConnectionError, match="airtable down"):
-            always_fails()
-
-        assert call_count == 5
-
-    def test_retry_openai_operation_retries_and_succeeds(self):
-        """retry_openai_operation retries on failure and eventually succeeds."""
-        call_count = 0
-
-        @retry_openai_operation
-        def openai_call():
-            nonlocal call_count
-            call_count += 1
-            if call_count < 2:
-                raise RateLimitError("429 too many", retry_after=1)
-            return "openai_ok"
-
-        result = openai_call()
-        assert result == "openai_ok"
-        assert call_count == 2
-
-    def test_retry_openai_operation_reraises_after_max(self):
-        """retry_openai_operation reraises after 5 failed attempts."""
-        call_count = 0
-
-        @retry_openai_operation
-        def always_fails():
-            nonlocal call_count
-            call_count += 1
-            raise ConnectionError("openai down")
-
-        with pytest.raises(ConnectionError, match="openai down"):
-            always_fails()
-
-        assert call_count == 5
-
-    def test_retry_google_operation_retries_and_succeeds(self):
-        """retry_google_operation retries on failure and eventually succeeds."""
-        call_count = 0
-
-        @retry_google_operation
-        def google_call():
-            nonlocal call_count
-            call_count += 1
-            if call_count < 4:
-                raise RateLimitError("quota exceeded")
-            return "google_ok"
-
-        result = google_call()
-        assert result == "google_ok"
-        assert call_count == 4
-
-    def test_retry_google_operation_reraises_after_max(self):
-        """retry_google_operation reraises after 5 failed attempts."""
-        call_count = 0
-
-        @retry_google_operation
-        def always_fails():
-            nonlocal call_count
-            call_count += 1
-            raise ConnectionError("google down")
-
-        with pytest.raises(ConnectionError, match="google down"):
-            always_fails()
-
-        assert call_count == 5
-
-    def test_retry_helpscout_operation_retries_and_succeeds(self):
-        """retry_helpscout_operation retries on failure and eventually succeeds."""
-        call_count = 0
-
-        @retry_helpscout_operation
-        def helpscout_call():
-            nonlocal call_count
-            call_count += 1
-            if call_count < 2:
-                raise RateLimitError("rate limited", retry_after=10)
-            return "helpscout_ok"
-
-        result = helpscout_call()
-        assert result == "helpscout_ok"
-        assert call_count == 2
-
-    def test_retry_helpscout_operation_reraises_after_max(self):
-        """retry_helpscout_operation reraises after 5 failed attempts."""
-        call_count = 0
-
-        @retry_helpscout_operation
-        def always_fails():
-            nonlocal call_count
-            call_count += 1
-            raise ConnectionError("helpscout down")
-
-        with pytest.raises(ConnectionError, match="helpscout down"):
-            always_fails()
-
-        assert call_count == 5
-
     def test_retry_with_backoff_succeeds_on_first_try(self):
         """When the function succeeds on the first call, no retries occur."""
         call_count = 0
@@ -582,18 +459,197 @@ class TestRetry:
         assert result == "immediate"
         assert call_count == 1
 
-    def test_retry_airtable_retries_generic_exception(self):
-        """retry_airtable_operation also retries on generic Exception."""
+
+# ── Service-specific decorators ──────────────────────────────────────
+#
+# These tests must never actually sleep. The decorators carry real
+# exponential backoff (up to 60s per wait), so a retry-exhausting path costs
+# ~30s of wall clock if the sleep is left live. Patching
+# ``tenacity.nap.time.sleep`` works because tenacity's nap module resolves
+# ``time.sleep`` dynamically at call time.
+
+# Every decorator below is expected to retry rate limits and nothing else.
+SERVICE_DECORATORS = [
+    ("airtable", retry_airtable_operation),
+    ("openai", retry_openai_operation),
+    ("google", retry_google_operation),
+    ("helpscout", retry_helpscout_operation),
+    ("zoom", retry_zoom_operation),
+    ("action_network", retry_action_network_operation),
+]
+
+SERVICE_IDS = [name for name, _ in SERVICE_DECORATORS]
+
+
+@pytest.mark.parametrize("name,decorator", SERVICE_DECORATORS, ids=SERVICE_IDS)
+class TestServiceRetryDecorators:
+    """Each service decorator retries RateLimitError, and only RateLimitError."""
+
+    @patch("tenacity.nap.time.sleep")
+    def test_retries_rate_limit_then_succeeds(self, mock_sleep, name, decorator):
+        """A RateLimitError is retried, and a later success is returned."""
         call_count = 0
 
-        @retry_airtable_operation
-        def generic_failure():
+        @decorator
+        def flaky():
             nonlocal call_count
             call_count += 1
-            if call_count < 2:
-                raise Exception("something unexpected")
-            return "recovered"
+            if call_count < 3:
+                raise RateLimitError("rate limited", retry_after=1)
+            return f"{name}_ok"
 
-        result = generic_failure()
-        assert result == "recovered"
-        assert call_count == 2
+        assert flaky() == f"{name}_ok"
+        assert call_count == 3
+        assert mock_sleep.called
+
+    @patch("tenacity.nap.time.sleep")
+    def test_reraises_rate_limit_after_five_attempts(self, mock_sleep, name, decorator):
+        """A persistent RateLimitError is reraised after 5 attempts."""
+        call_count = 0
+
+        @decorator
+        def always_rate_limited():
+            nonlocal call_count
+            call_count += 1
+            raise RateLimitError(f"{name} rate limited", retry_after=1)
+
+        with pytest.raises(RateLimitError, match=f"{name} rate limited"):
+            always_rate_limited()
+
+        assert call_count == 5
+
+    @patch("tenacity.nap.time.sleep")
+    def test_does_not_retry_connection_error(self, mock_sleep, name, decorator):
+        """ConnectionError wraps a 4xx/5xx response — it must fail immediately.
+
+        Regression guard: these predicates once included bare ``Exception``,
+        which made every deterministic failure cost ~30s of backoff before
+        surfacing.
+        """
+        call_count = 0
+
+        @decorator
+        def not_connected():
+            nonlocal call_count
+            call_count += 1
+            raise ConnectionError(f"{name} down")
+
+        with pytest.raises(ConnectionError, match=f"{name} down"):
+            not_connected()
+
+        assert call_count == 1
+        assert not mock_sleep.called
+
+    @patch("tenacity.nap.time.sleep")
+    def test_does_not_retry_generic_exception(self, mock_sleep, name, decorator):
+        """A bug in our own code surfaces immediately, not after 5 attempts."""
+        call_count = 0
+
+        @decorator
+        def buggy():
+            nonlocal call_count
+            call_count += 1
+            raise KeyError("missing_field")
+
+        with pytest.raises(KeyError, match="missing_field"):
+            buggy()
+
+        assert call_count == 1
+        assert not mock_sleep.called
+
+    @patch("tenacity.nap.time.sleep")
+    def test_does_not_retry_auth_error(self, mock_sleep, name, decorator):
+        """A bad credential will never succeed on attempt 2."""
+        call_count = 0
+
+        @decorator
+        def unauthorized():
+            nonlocal call_count
+            call_count += 1
+            raise AuthenticationError(f"{name} auth failed")
+
+        with pytest.raises(AuthenticationError):
+            unauthorized()
+
+        assert call_count == 1
+        assert not mock_sleep.called
+
+
+class TestGoogleRateLimitPredicate:
+    """_is_google_rate_limit matches 429 from either Google client library.
+
+    The Google connectors do not translate HTTP status into our exception
+    hierarchy — gspread and google-cloud-bigquery raise their own types — so
+    this predicate is what keeps 429 handling alive for them.
+    """
+
+    @staticmethod
+    def _gspread_api_error(status_code):
+        """Build a real gspread APIError carrying the given HTTP status."""
+        from gspread.exceptions import APIError
+
+        response = MagicMock()
+        response.status_code = status_code
+        response.json.return_value = {
+            "error": {"code": status_code, "message": "boom", "status": "ERROR"}
+        }
+        return APIError(response)
+
+    def test_matches_our_rate_limit_error(self):
+        assert _is_google_rate_limit(RateLimitError("slow down")) is True
+
+    def test_matches_api_core_too_many_requests(self):
+        from google.api_core.exceptions import TooManyRequests
+
+        assert _is_google_rate_limit(TooManyRequests("429")) is True
+
+    def test_does_not_match_api_core_service_unavailable(self):
+        """503 leaves the request in an unknown state — not safe to replay."""
+        from google.api_core.exceptions import ServiceUnavailable
+
+        assert _is_google_rate_limit(ServiceUnavailable("503")) is False
+
+    def test_matches_gspread_429(self):
+        assert _is_google_rate_limit(self._gspread_api_error(429)) is True
+
+    @pytest.mark.parametrize("status_code", [400, 403, 404, 500, 503])
+    def test_does_not_match_other_gspread_statuses(self, status_code):
+        assert _is_google_rate_limit(self._gspread_api_error(status_code)) is False
+
+    def test_does_not_match_gspread_worksheet_not_found(self):
+        from gspread.exceptions import WorksheetNotFound
+
+        assert _is_google_rate_limit(WorksheetNotFound("Missing")) is False
+
+    def test_does_not_match_our_connection_error(self):
+        assert _is_google_rate_limit(ConnectionError("Not connected")) is False
+
+    @pytest.mark.parametrize(
+        "exc", [Exception("unexpected"), KeyError("k"), TypeError("t")]
+    )
+    def test_does_not_match_generic_exceptions(self, exc):
+        assert _is_google_rate_limit(exc) is False
+
+    def test_degrades_gracefully_without_the_google_extras(self, monkeypatch):
+        """core.retry is imported by the base install, where neither the sheets
+        nor the bigquery extra is present. The vendor types resolve lazily for
+        exactly that reason, so a missing extra must contribute nothing rather
+        than raise ImportError."""
+        import builtins
+
+        import ccef_connections.core.retry as retry_module
+
+        real_import = builtins.__import__
+
+        def blocked_import(name, *args, **kwargs):
+            if name.startswith(("google", "gspread")):
+                raise ImportError(f"No module named {name!r}")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", blocked_import)
+        monkeypatch.setattr(retry_module, "_GOOGLE_VENDOR_TYPES", None)
+
+        assert retry_module._google_vendor_types() == {"api_core": (), "gspread": None}
+        # Our own RateLimitError still matches; nothing else does.
+        assert retry_module._is_google_rate_limit(RateLimitError("slow down")) is True
+        assert retry_module._is_google_rate_limit(Exception("boom")) is False

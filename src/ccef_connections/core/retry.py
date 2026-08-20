@@ -6,19 +6,121 @@ with intelligent backoff strategies tailored to different API rate limits.
 """
 
 import logging
-from typing import Callable, Type, Tuple
+from typing import Any, Callable, Dict, Optional, Type, Tuple
 
 from tenacity import (
     retry,
     stop_after_attempt,
     wait_exponential,
+    retry_if_exception,
     retry_if_exception_type,
     before_sleep_log,
 )
 
+# NOTE: this ConnectionError is ours (ccef_connections.exceptions), and it
+# shadows the builtin for the rest of this module. It is NOT related to
+# requests.exceptions.ConnectionError or the builtin socket-level one — neither
+# of those is a subclass, so naming it in a retry predicate matches only
+# exceptions our own connectors raised deliberately.
 from ..exceptions import RateLimitError, ConnectionError
 
 logger = logging.getLogger(__name__)
+
+
+# ── What is safe to retry ────────────────────────────────────────────────────
+#
+# Every decorator below retries rate limiting (HTTP 429) and nothing else.
+# That is deliberate and applies across all services:
+#
+#   * A 429 means the request was *rejected* — nothing was applied server-side,
+#     so replaying it cannot duplicate an effect. Safe to retry.
+#   * A 4xx (auth, not-found, validation) will never succeed on attempt 2.
+#     Retrying only delays the error message that says what to fix.
+#   * A 5xx leaves the request in an *unknown* state. Several methods here are
+#     not idempotent — SheetsWriterConnector.get_or_create_spreadsheet,
+#     AirtableConnector.batch_upsert, ActionNetworkConnector.create_person —
+#     so replaying a 5xx risks a duplicate write. Surface it and let the caller
+#     decide.
+#   * An exception from our own code (KeyError, TypeError, AttributeError) is a
+#     bug. Retrying it turns an instant traceback into a 30-second wait that
+#     reads like a network problem.
+#
+# Do not add bare ``Exception`` to a retry predicate. It silently swallows all
+# four cases above, and because ``reraise=True`` surfaces the right error in the
+# end, the only visible symptom is unexplained slowness.
+
+
+_GOOGLE_VENDOR_TYPES: Optional[Dict[str, Any]] = None
+
+
+def _google_vendor_types() -> Dict[str, Any]:
+    """
+    Lazily resolve the vendor exception types that mean "Google said 429".
+
+    This module is imported by the base install, where neither the ``sheets``
+    extra (gspread) nor the ``bigquery`` extra (google-cloud-bigquery) is
+    guaranteed to be present, so these types cannot be imported at module
+    scope. Resolved once and cached; a missing extra simply contributes nothing.
+
+    Returns:
+        Dict with ``api_core`` (tuple of exception types) and ``gspread``
+        (the ``APIError`` class, or None if gspread is not installed).
+    """
+    global _GOOGLE_VENDOR_TYPES
+    if _GOOGLE_VENDOR_TYPES is None:
+        resolved: Dict[str, Any] = {"api_core": (), "gspread": None}
+        try:
+            from google.api_core.exceptions import TooManyRequests
+
+            resolved["api_core"] = (TooManyRequests,)
+        except ImportError:
+            pass
+        try:
+            from gspread.exceptions import APIError
+
+            resolved["gspread"] = APIError
+        except ImportError:
+            pass
+        _GOOGLE_VENDOR_TYPES = resolved
+    return _GOOGLE_VENDOR_TYPES
+
+
+def _is_google_rate_limit(exc: BaseException) -> bool:
+    """
+    True only for a Google API rate-limit (429) failure.
+
+    Unlike the ``requests``-based connectors, the Google connectors do not
+    translate HTTP status codes into our exception hierarchy — gspread and
+    google-cloud-bigquery raise their own types straight through. So matching
+    on ``RateLimitError`` alone would never fire, and gspread would lose 429
+    handling entirely (it is the one vendor library here with no internal
+    retry of its own; google-cloud-bigquery and pyairtable both retry 429
+    themselves).
+
+    gspread signals status via ``APIError.response.status_code`` rather than a
+    typed subclass, so it needs a value check rather than an isinstance check.
+
+    Args:
+        exc: The exception raised by the decorated call
+
+    Returns:
+        True if this is a 429 and therefore safe to replay
+    """
+    if isinstance(exc, RateLimitError):
+        return True
+
+    vendor = _google_vendor_types()
+
+    api_core_types = vendor["api_core"]
+    if api_core_types and isinstance(exc, api_core_types):
+        return True
+
+    gspread_api_error = vendor["gspread"]
+    if gspread_api_error is not None and isinstance(exc, gspread_api_error):
+        response = getattr(exc, "response", None)
+        return getattr(response, "status_code", None) == 429
+
+    return False
 
 
 def retry_with_backoff(
@@ -63,6 +165,14 @@ def retry_airtable_operation(func: Callable) -> Callable:
     Airtable has a rate limit of 5 requests per second per base.
     This decorator implements exponential backoff with appropriate timing.
 
+    Only retries on RateLimitError. Note that pyairtable already retries 429
+    internally (``Api(retry_strategy=True)`` is the default: urllib3 Retry with
+    ``status_forcelist=(429,)``, 5 attempts), so in practice a rate limit is
+    absorbed a layer below this one and this decorator is a thin outer net
+    rather than the primary defence. It deliberately does NOT retry 5xx:
+    ``batch_upsert`` is not idempotent, so replaying an unknown-state write
+    risks duplicate records.
+
     Args:
         func: The function to decorate
 
@@ -77,7 +187,7 @@ def retry_airtable_operation(func: Callable) -> Callable:
     return retry(
         stop=stop_after_attempt(5),
         wait=wait_exponential(multiplier=1.5, min=0.2, max=10.0),
-        retry=retry_if_exception_type((ConnectionError, RateLimitError, Exception)),
+        retry=retry_if_exception_type(RateLimitError),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )(func)
@@ -88,6 +198,13 @@ def retry_openai_operation(func: Callable) -> Callable:
     Decorator for OpenAI API operations with rate limit handling.
 
     Handles 429 (rate limit) errors with exponential backoff.
+
+    Only retries on RateLimitError. The connector goes through langchain onto
+    the ``openai`` SDK, which already retries 429, 5xx, and connection errors
+    internally (``max_retries=2`` by default), so transient failures are
+    absorbed a layer below this one. Model/prompt/quota errors surface
+    immediately rather than costing five attempts of backoff — and a completion
+    is billed per attempt, which is another reason not to replay blindly.
 
     Args:
         func: The function to decorate
@@ -103,7 +220,7 @@ def retry_openai_operation(func: Callable) -> Callable:
     return retry(
         stop=stop_after_attempt(5),
         wait=wait_exponential(multiplier=2.0, min=1.0, max=60.0),
-        retry=retry_if_exception_type((ConnectionError, RateLimitError, Exception)),
+        retry=retry_if_exception_type(RateLimitError),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )(func)
@@ -115,6 +232,16 @@ def retry_google_operation(func: Callable) -> Callable:
 
     Google APIs have various rate limits depending on the service.
     This implements a conservative retry strategy.
+
+    Shared by SheetsConnector, SheetsWriterConnector, and BigQueryConnector.
+    Retries 429 only, via :func:`_is_google_rate_limit` — a predicate rather
+    than a type tuple because gspread reports status on
+    ``APIError.response.status_code`` instead of raising a typed subclass, and
+    because the vendor types live behind optional extras.
+
+    gspread has no retry of its own, so this decorator is the only 429 handling
+    the Sheets connectors get. google-cloud-bigquery already retries transient
+    errors internally via ``DEFAULT_RETRY``.
 
     Args:
         func: The function to decorate
@@ -130,7 +257,7 @@ def retry_google_operation(func: Callable) -> Callable:
     return retry(
         stop=stop_after_attempt(5),
         wait=wait_exponential(multiplier=2.0, min=1.0, max=60.0),
-        retry=retry_if_exception_type((ConnectionError, RateLimitError, Exception)),
+        retry=retry_if_exception(_is_google_rate_limit),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )(func)
@@ -142,6 +269,11 @@ def retry_helpscout_operation(func: Callable) -> Callable:
 
     HelpScout API has rate limits; this implements exponential backoff
     with 5 attempts, matching the pattern used by OpenAI/Google decorators.
+
+    Only retries on RateLimitError. The connector translates HTTP status into
+    our exception hierarchy, so ConnectionError here wraps a 4xx/5xx response
+    and should fail immediately — the caller sees the real error instead of
+    waiting through five attempts.
 
     Args:
         func: The function to decorate
@@ -157,7 +289,7 @@ def retry_helpscout_operation(func: Callable) -> Callable:
     return retry(
         stop=stop_after_attempt(5),
         wait=wait_exponential(multiplier=2.0, min=1.0, max=60.0),
-        retry=retry_if_exception_type((ConnectionError, RateLimitError, Exception)),
+        retry=retry_if_exception_type(RateLimitError),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )(func)
@@ -169,6 +301,11 @@ def retry_zoom_operation(func: Callable) -> Callable:
 
     Zoom API has rate limits; this implements exponential backoff
     with 5 attempts, matching the pattern used by other API decorators.
+
+    Only retries on RateLimitError. The connector translates HTTP status into
+    our exception hierarchy, so ConnectionError here wraps a 4xx/5xx response
+    and should fail immediately — the caller sees the real error instead of
+    waiting through five attempts.
 
     Args:
         func: The function to decorate
@@ -184,7 +321,7 @@ def retry_zoom_operation(func: Callable) -> Callable:
     return retry(
         stop=stop_after_attempt(5),
         wait=wait_exponential(multiplier=2.0, min=1.0, max=60.0),
-        retry=retry_if_exception_type((ConnectionError, RateLimitError, Exception)),
+        retry=retry_if_exception_type(RateLimitError),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )(func)
@@ -196,6 +333,13 @@ def retry_action_network_operation(func: Callable) -> Callable:
 
     Action Network has a rate limit of 4 requests per second.
     This implements exponential backoff with 5 attempts.
+
+    Only retries on RateLimitError. The connector translates HTTP status into
+    our exception hierarchy, so ConnectionError here wraps a 4xx/5xx response
+    and should fail immediately. That matters more here than elsewhere: many of
+    the decorated methods write (``create_person``, ``update_person``,
+    ``unsubscribe_person``), and replaying an unknown-state write against a
+    people database risks duplicate records.
 
     Args:
         func: The function to decorate
@@ -211,7 +355,7 @@ def retry_action_network_operation(func: Callable) -> Callable:
     return retry(
         stop=stop_after_attempt(5),
         wait=wait_exponential(multiplier=2.0, min=1.0, max=60.0),
-        retry=retry_if_exception_type((ConnectionError, RateLimitError, Exception)),
+        retry=retry_if_exception_type(RateLimitError),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )(func)

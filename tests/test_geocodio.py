@@ -578,8 +578,15 @@ class TestBatchReverseGeocode:
 
 
 class TestErrorHandling:
+    # geocode() carries @retry_geocodio_operation, so a persistent 429 exhausts
+    # 5 attempts with real exponential backoff (~30s) before the RateLimitError
+    # surfaces. Patch tenacity's sleep so the assertion stays on the public
+    # method without paying for the wait.
     @patch("ccef_connections.connectors.geocodio.requests.request")
-    def test_rate_limit_error_has_retry_after(self, mock_req, connected_connector):
+    @patch("tenacity.nap.time.sleep")
+    def test_rate_limit_error_has_retry_after(
+        self, mock_sleep, mock_req, connected_connector
+    ):
         mock_req.return_value = _make_response(
             429, text="quota exceeded", headers={"Retry-After": "45"}
         )
@@ -588,9 +595,13 @@ class TestErrorHandling:
             connected_connector.geocode("any address")
 
         assert exc_info.value.retry_after == 45
+        assert mock_req.call_count == 5
 
     @patch("ccef_connections.connectors.geocodio.requests.request")
-    def test_rate_limit_defaults_retry_after_60(self, mock_req, connected_connector):
+    @patch("tenacity.nap.time.sleep")
+    def test_rate_limit_defaults_retry_after_60(
+        self, mock_sleep, mock_req, connected_connector
+    ):
         mock_req.return_value = _make_response(429, text="quota exceeded", headers={})
 
         with pytest.raises(RateLimitError) as exc_info:
