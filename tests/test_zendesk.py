@@ -484,21 +484,158 @@ class TestWrites:
         )
         assert connected_connector.get_job_status("abc")["status"] == "completed"
 
-    def test_no_config_mutators_exposed(self, connector):
-        """Config-object writes belong with the reviewed config-as-code script.
+    def test_write_surface_is_an_explicit_allowlist(self, connector):
+        """The set of mutators is pinned, so adding one takes a deliberate edit.
 
-        Guards against someone adding trigger/view/group mutation here, where it
-        would run against IT's shared instance without the namespacing and
-        non-destructive guarantees that plan carries.
+        Single-object config writes are supported (they back reviewed
+        config-as-code), but this connector runs against IT's SHARED instance.
+        Widening the write surface -- especially to anything bulk or
+        reconciling -- must be a conscious change to this list, not a drive-by.
         """
-        forbidden = [
+        allowed = {
+            # tickets
+            "create_ticket",
+            "update_ticket",
+            "create_many_tickets",
+            # config objects, one at a time, by explicit id
+            "create_ticket_field",
+            "update_ticket_field",
+            "update_ticket_form",
+            "create_trigger",
+            "update_trigger",
+        }
+        actual = {
             name
             for name in dir(connector)
             if not name.startswith("_")
             and any(name.startswith(v) for v in ("create_", "update_", "delete_"))
-            and not name.endswith(("ticket", "tickets"))
+        }
+        assert actual == allowed
+
+    def test_no_delete_methods_at_all(self, connector):
+        """Nothing in this connector may destroy a config object or a ticket.
+
+        Deletion on a shared instance is the one mistake with no cheap undo, so
+        the capability simply is not exposed.
+        """
+        assert [n for n in dir(connector) if n.startswith("delete")] == []
+
+    def test_no_bulk_config_mutators(self, connector):
+        """No 'update everything' / reconcile helpers.
+
+        An enumerate-config-and-write-it-back helper is what would let a bug
+        clobber IT's production triggers, macros and views. Bulk writes are
+        limited to tickets (create_many_tickets), which are our own objects.
+        """
+        bulk = [
+            n
+            for n in dir(connector)
+            if not n.startswith("_")
+            and any(k in n for k in ("_many", "_all", "sync_", "reconcile", "apply_"))
+            and n != "create_many_tickets"
         ]
-        assert forbidden == []
+        assert bulk == []
+
+
+# ── Config-object writes ──────────────────────────────────────────────
+
+
+class TestConfigWrites:
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_create_ticket_field(self, mock_request, connected_connector):
+        mock_request.return_value = _make_response(200, {"ticket_field": {"id": 99}})
+        field = {"type": "tagger", "title": "Campaigns - Request Type"}
+        result = connected_connector.create_ticket_field(field)
+
+        assert result == {"id": 99}
+        assert mock_request.call_args[0][0] == "POST"
+        assert mock_request.call_args[0][1].endswith("/ticket_fields.json")
+        assert mock_request.call_args[1]["json"] == {"ticket_field": field}
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_update_ticket_field_targets_one_id(self, mock_request, connected_connector):
+        mock_request.return_value = _make_response(200, {"ticket_field": {"id": 99}})
+        connected_connector.update_ticket_field(99, {"required": False})
+
+        assert mock_request.call_args[0][0] == "PUT"
+        assert mock_request.call_args[0][1].endswith("/ticket_fields/99.json")
+        assert mock_request.call_args[1]["json"] == {"ticket_field": {"required": False}}
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_get_ticket_field_unwraps(self, mock_request, connected_connector):
+        mock_request.return_value = _make_response(
+            200, {"ticket_field": {"id": 99, "title": "x"}}
+        )
+        assert connected_connector.get_ticket_field(99)["title"] == "x"
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_get_ticket_form_unwraps(self, mock_request, connected_connector):
+        mock_request.return_value = _make_response(
+            200, {"ticket_form": {"id": 5, "name": "Campaigns"}}
+        )
+        assert connected_connector.get_ticket_form(5)["name"] == "Campaigns"
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_update_ticket_form(self, mock_request, connected_connector):
+        mock_request.return_value = _make_response(200, {"ticket_form": {"id": 5}})
+        body = {"ticket_field_ids": [1, 2], "agent_conditions": []}
+        connected_connector.update_ticket_form(5, body)
+
+        assert mock_request.call_args[0][0] == "PUT"
+        assert mock_request.call_args[0][1].endswith("/ticket_forms/5.json")
+        assert mock_request.call_args[1]["json"] == {"ticket_form": body}
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_create_trigger(self, mock_request, connected_connector):
+        mock_request.return_value = _make_response(200, {"trigger": {"id": 7}})
+        result = connected_connector.create_trigger({"title": "Campaigns: set category"})
+
+        assert result == {"id": 7}
+        assert mock_request.call_args[0][1].endswith("/triggers.json")
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_update_trigger(self, mock_request, connected_connector):
+        mock_request.return_value = _make_response(200, {"trigger": {"id": 7}})
+        connected_connector.update_trigger(7, {"active": False})
+
+        assert mock_request.call_args[0][0] == "PUT"
+        assert mock_request.call_args[0][1].endswith("/triggers/7.json")
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_search_count_returns_int_only(self, mock_request, connected_connector):
+        mock_request.return_value = _make_response(200, {"count": 0})
+        assert connected_connector.search_count("type:ticket ticket_form_id:5") == 0
+        assert mock_request.call_args[1]["params"] == {
+            "query": "type:ticket ticket_form_id:5"
+        }
+
+
+# ── Scope handling ────────────────────────────────────────────────────
+
+
+class TestScope:
+    def test_read_write_scope_constant_is_read_write(self):
+        """'write' alone yields a token that 403s -- see module docstring note 3."""
+        from ccef_connections.connectors.zendesk import ZENDESK_READ_WRITE_SCOPE
+
+        assert ZENDESK_READ_WRITE_SCOPE == "read write"
+
+    @patch("ccef_connections.connectors.zendesk.requests.post")
+    def test_requested_scope_is_sent_to_token_endpoint(self, mock_post, connector):
+        from ccef_connections.connectors.zendesk import ZENDESK_READ_WRITE_SCOPE
+
+        mock_post.return_value = _make_response(200, TOKEN_RESPONSE)
+        c = ZendeskConnector(
+            subdomain=SUBDOMAIN, scope=ZENDESK_READ_WRITE_SCOPE, max_requests_per_minute=0
+        )
+        c._credential_manager = connector._credential_manager
+        c.connect()
+
+        assert mock_post.call_args[1]["json"]["scope"] == "read write"
+
+    def test_mutation_is_not_available_at_default_scope(self):
+        """Writing takes an explicit opt-in; the default connector is read-only."""
+        assert ZENDESK_DEFAULT_SCOPE == "read"
 
 
 # ── Health check ──────────────────────────────────────────────────────

@@ -23,6 +23,12 @@ Two operational notes specific to CCEF's instance (commoncause.zendesk.com):
 2. The issued access token acts as the OAuth client's OWNING USER, so that
    user's role -- not the requested scope -- is the real permission ceiling.
    Scope is an additional, narrower cap on top of it.
+3. To write, request the scope string ``"read write"`` -- NOT ``"write"``.
+   Zendesk happily issues a token for scope ``"write"`` alone, and that token
+   then 403s on every call with "missing the following required scopes:
+   users:read, read", because even a write request reads the acting user first.
+   The failure looks like a permissions problem on the endpoint; it is actually
+   the scope string. Verified live against commoncause 2026-08-20.
 
 Examples:
     >>> connector = ZendeskConnector()
@@ -47,9 +53,13 @@ logger = logging.getLogger(__name__)
 ZENDESK_TOKEN_URL_TEMPLATE = "https://{subdomain}.zendesk.com/oauth/tokens"
 ZENDESK_API_BASE_TEMPLATE = "https://{subdomain}.zendesk.com/api/v2"
 
-# Read-only by default. Writing requires a separate write-scoped OAuth client;
-# see the module docstring and the project's config-as-code plan.
+# Read-only by default. Callers that need to mutate anything must opt in
+# explicitly by passing ZENDESK_READ_WRITE_SCOPE.
 ZENDESK_DEFAULT_SCOPE = "read"
+
+# The correct scope string for mutation. "write" on its own is NOT usable --
+# see note 3 in the module docstring.
+ZENDESK_READ_WRITE_SCOPE = "read write"
 
 # Self-throttle default, well under the instance-wide ~400/min shared with IT.
 ZENDESK_DEFAULT_MAX_RPM = 120
@@ -587,13 +597,28 @@ class ZendeskConnector(BaseConnection):
         """
         return self._paginate(f"/groups/{group_id}/tickets.json", resource_key="tickets")
 
+    @retry_zendesk_operation
+    def search_count(self, query: str) -> int:
+        """
+        Return how many results a search query matches, without fetching them.
+
+        Much cheaper than paginating a result set just to size it, and it
+        returns no record bodies -- so it is the safe way to ask "is this
+        config object actually in use?" without pulling PII.
+
+        Args:
+            query: A Zendesk search query (e.g. 'type:ticket ticket_form_id:123')
+
+        Returns:
+            The match count
+        """
+        return self._request("GET", "/search/count.json", params={"query": query})["count"]
+
     # ── Tickets (write) ───────────────────────────────────────────────
     #
-    # These require a write-scoped OAuth client. The default 'read' scope is
+    # These require the 'read write' scope. The default 'read' scope is
     # intentional: CCEF's instance is shared with IT, so read and write are
-    # separated by CREDENTIAL rather than by convention. Config-object
-    # mutation (triggers/macros/views/groups/forms) is deliberately absent --
-    # it belongs with the reviewed config-as-code apply script, not here.
+    # separated by CREDENTIAL rather than by convention.
 
     @retry_zendesk_operation
     def create_ticket(self, ticket: Dict[str, Any]) -> Dict[str, Any]:
@@ -661,3 +686,150 @@ class ZendeskConnector(BaseConnection):
             The job status record
         """
         return self._request("GET", f"/job_statuses/{job_id}.json")["job_status"]
+
+    # ── Configuration objects (write) ─────────────────────────────────
+    #
+    # These exist to support reviewed, idempotent config-as-code. They are
+    # deliberately NARROW: every mutation targets ONE object, addressed by an
+    # explicit id the caller had to look up first.
+    #
+    # What is deliberately absent, and must stay absent:
+    #   - delete/destroy of any config object
+    #   - bulk or "reconcile everything" helpers
+    #   - anything that enumerates config and writes back what it found
+    #
+    # CCEF's instance is SHARED with IT, whose own automation owns most of the
+    # triggers, macros, views, groups and fields in it. An enumerate-and-write
+    # helper here would be one bug away from clobbering IT's production
+    # helpdesk config. Namespace policy (which objects a project may touch)
+    # belongs in that project's reviewed apply script, not in this library --
+    # the library only provides the single-object primitives it enforces on.
+
+    @retry_zendesk_operation
+    def get_ticket_field(self, field_id: int) -> Dict[str, Any]:
+        """
+        Return a single ticket field.
+
+        Args:
+            field_id: The field's numeric id
+
+        Returns:
+            The ticket field record
+        """
+        return self._request("GET", f"/ticket_fields/{field_id}.json")["ticket_field"]
+
+    @retry_zendesk_operation
+    def create_ticket_field(self, field: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a custom ticket field.
+
+        NOTE: ticket fields are INSTANCE-WIDE objects, and so are the tag values
+        of drop-down (``tagger``) options. On a shared instance, namespace both
+        the field title and every option value.
+
+        Args:
+            field: The field payload (type, title, custom_field_options, ...)
+
+        Returns:
+            The created ticket field record
+        """
+        return self._request(
+            "POST", "/ticket_fields.json", json_body={"ticket_field": field}
+        )["ticket_field"]
+
+    @retry_zendesk_operation
+    def update_ticket_field(self, field_id: int, field: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Update one custom ticket field.
+
+        WARNING: a field's ``required``, ``required_in_portal`` and
+        ``visible_in_portal`` properties are GLOBAL to the field -- the ticket
+        forms API stores only ``ticket_field_ids`` and has no per-form
+        overrides. Changing them on a field that appears on someone else's form
+        changes their form too. Confirm a field is exclusive to your own form(s)
+        before touching its properties.
+
+        Passing ``custom_field_options`` REPLACES the option list: options you
+        omit are removed, and any ticket still holding a removed value keeps an
+        orphaned tag. Send the full intended list.
+
+        Args:
+            field_id: The field's numeric id
+            field: The properties to change
+
+        Returns:
+            The updated ticket field record
+        """
+        return self._request(
+            "PUT", f"/ticket_fields/{field_id}.json", json_body={"ticket_field": field}
+        )["ticket_field"]
+
+    @retry_zendesk_operation
+    def get_ticket_form(self, form_id: int) -> Dict[str, Any]:
+        """
+        Return a single ticket form.
+
+        Args:
+            form_id: The form's numeric id
+
+        Returns:
+            The ticket form record
+        """
+        return self._request("GET", f"/ticket_forms/{form_id}.json")["ticket_form"]
+
+    @retry_zendesk_operation
+    def update_ticket_form(self, form_id: int, form: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Update one ticket form.
+
+        Both ``ticket_field_ids`` and the conditional-field sets
+        (``agent_conditions`` / ``end_user_conditions``) are REPLACED wholesale
+        by what you send, so read the form first and send the full intended
+        state rather than a partial edit.
+
+        A field referenced by ``end_user_conditions`` must be on the form AND
+        have ``visible_in_portal`` set, or the update is rejected.
+
+        Args:
+            form_id: The form's numeric id
+            form: The properties to change
+
+        Returns:
+            The updated ticket form record
+        """
+        return self._request(
+            "PUT", f"/ticket_forms/{form_id}.json", json_body={"ticket_form": form}
+        )["ticket_form"]
+
+    @retry_zendesk_operation
+    def create_trigger(self, trigger: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a ticket trigger.
+
+        Args:
+            trigger: The trigger payload (title, conditions, actions, ...)
+
+        Returns:
+            The created trigger record
+        """
+        return self._request(
+            "POST", "/triggers.json", json_body={"trigger": trigger}
+        )["trigger"]
+
+    @retry_zendesk_operation
+    def update_trigger(self, trigger_id: int, trigger: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Update one ticket trigger.
+
+        ``conditions`` and ``actions`` are replaced wholesale by what you send.
+
+        Args:
+            trigger_id: The trigger's numeric id
+            trigger: The properties to change
+
+        Returns:
+            The updated trigger record
+        """
+        return self._request(
+            "PUT", f"/triggers/{trigger_id}.json", json_body={"trigger": trigger}
+        )["trigger"]
