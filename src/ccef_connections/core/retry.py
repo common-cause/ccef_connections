@@ -365,8 +365,22 @@ def retry_ptv_operation(func: Callable) -> Callable:
     """
     Decorator for Protect the Vote (PTV) API operations with retry logic.
 
-    Retries on transient connection errors and rate limits with
-    exponential backoff, matching the pattern used by other API decorators.
+    Only retries on RateLimitError, matching every other decorator here.
+
+    This one used to retry ConnectionError as well, which sounds like "retry
+    transient network failures" but wasn't: the connector wraps BOTH a genuine
+    ``requests`` transport failure and any 4xx/5xx response in the same
+    ConnectionError, so a PTV 404 or a bad API key cost five attempts and ~30s
+    of exponential backoff before surfacing. In a scheduled Civis job that
+    turned a hard configuration error into what looked like a transient blip.
+    A missing PTV_API_KEY_PASSWORD was the worst case — connect() wraps
+    CredentialError into ConnectionError, so it too was retried five times.
+
+    Losing retry on real transport blips is the accepted trade: the connector
+    cannot distinguish them from a 4xx after wrapping, and the multi-state
+    helpers (``get_all_users`` and friends) are the ones that would suffer, so
+    a caller pulling 50 states can re-run rather than have every hard failure
+    pay 30s first.
 
     Args:
         func: The function to decorate
@@ -382,7 +396,7 @@ def retry_ptv_operation(func: Callable) -> Callable:
     return retry(
         stop=stop_after_attempt(5),
         wait=wait_exponential(multiplier=2.0, min=1.0, max=60.0),
-        retry=retry_if_exception_type((ConnectionError, RateLimitError)),
+        retry=retry_if_exception_type(RateLimitError),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )(func)

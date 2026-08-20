@@ -868,9 +868,9 @@ This pattern is compatible with Civis Docker environments while also working sea
 
 ### Retry Logic
 
-All connectors retry with exponential backoff, and with one exception (PTV, below)
-every one of them **retries rate limiting (HTTP 429) and nothing else.** That is a
-deliberate, library-wide rule:
+All connectors retry with exponential backoff, and every one of them **retries rate
+limiting (HTTP 429) and nothing else.** That is a deliberate, library-wide rule with
+no exceptions:
 
 - A **429** means the request was *rejected* — nothing was applied server-side, so
   replaying it cannot duplicate an effect. Safe to retry.
@@ -887,13 +887,14 @@ Per-service detail:
 - **Airtable**: 5 retries on 429. Note pyairtable already retries 429 internally (urllib3 `Retry`, 5 attempts), so a rate limit is normally absorbed a layer below this one
 - **OpenAI**: 5 retries on 429. The `openai` SDK under langchain also retries 429/5xx/connection errors internally (`max_retries=2`)
 - **Google APIs** (Sheets, Sheets Writer, BigQuery): 5 retries on 429, matched via a predicate rather than an exception type — gspread reports status on `APIError.response.status_code` instead of raising a typed subclass. gspread is the only client library here with no retry of its own; google-cloud-bigquery retries transient errors internally via `DEFAULT_RETRY`
+- **Snowflake**: 5 retries on 429, which in practice leaves very little — deliberately. `snowflake-connector-python` already retries transient network failures internally (as google-cloud-bigquery does), and a **statement timeout must never be retried**: `READER_WH` caps statements at 60s at the *warehouse* level and `PUBLIC` cannot raise it, so a query that timed out will time out again — retrying just spends three more minutes failing and makes a deterministic limit look flaky. IP-allowlist rejections, bad passwords, missing objects and read-only violations are all permanent until a human changes something
 - **HelpScout**: 5 retries on 429, with auto token refresh on 401
 - **Zendesk**: 5 retries on 429, honoring the exact `Retry-After` plus a 2s buffer. The rate budget is per-*account* and shared with IT's automation, so the connector also self-throttles client-side (default 120 req/min, under the ~400/min ceiling)
 - **Zoom**: 5 retries on 429, with auto token refresh on 401
 - **Action Network**: 5 retries on 429 (4 req/s limit). Matters more here than elsewhere — many decorated methods write to a people database, so an unknown-state write is never replayed
 - **Action Builder**: 5 retries, handles 429 rate limits (4 req/s)
 - **Asana**: 5 retries on 429 rate limit only (1,500 req/min paid, 150 free), honoring the exact `Retry-After` duration the API specifies plus a 2s buffer. Other HTTP errors — including 402 for paid-tier features on a free workspace — surface immediately.
-- **PTV**: 5 retries on 429 *and* on the library's `ConnectionError` — the one decorator that still retries more than rate limiting. Because `ConnectionError` here wraps both a genuine `requests` transport failure and any 4xx/5xx response, a PTV 404 currently costs five attempts before surfacing. `PTVConnector` has no test file yet, so it was left alone rather than changed unverified
+- **PTV**: 5 retries on 429 only. Narrowed in 0.10.0 — it previously also retried the library's `ConnectionError`, which wraps both a genuine `requests` transport failure *and* any 4xx/5xx response, so a PTV 404 or a bad API key cost five attempts and ~30s of backoff before surfacing. A missing `PTV_API_KEY_PASSWORD` was the worst case, since `connect()` wraps `CredentialError` into `ConnectionError` too. Real transport blips no longer retry — the connector can't tell them apart from a 4xx after wrapping, so re-running a multi-state pull beats making every hard failure pay 30s first
 - **ROI CRM**: 5 retries on 429 rate limit only (500 req per 5-min window); other HTTP errors surface immediately
 - **GitHub**: 5 retries on 429 / 403 secondary rate limits, honoring the exact `Retry-After` (or `x-ratelimit-reset`) duration the API specifies plus a 2s buffer. Other HTTP errors surface immediately.
 - **Geocodio**: 5 retries on 429 rate limit only; other HTTP errors surface immediately
@@ -1572,7 +1573,7 @@ for conv in conversations:
 
 ## Testing
 
-The library has 1,277 unit tests covering the connectors and core modules — every connector except `PTVConnector`, which does not yet have a dedicated test file. The full suite runs in well under 10 seconds; every test mocks its transport, so nothing should take measurable time.
+The library has 1,376 unit tests covering the core modules and **every** connector — each one has a dedicated test file. The full suite runs in roughly ten seconds; every test mocks its transport, so no individual test should take measurable time.
 
 **Retry paths must never actually sleep.** The service decorators carry real
 exponential backoff, so a test that drives a decorated method to exhaust its retries
@@ -1610,6 +1611,8 @@ pytest tests/test_bigquery.py -v
 pytest tests/test_openai.py -v
 pytest tests/test_sheets.py -v
 pytest tests/test_sheets_writer.py -v
+pytest tests/test_ptv.py -v
+pytest tests/test_snowflake.py -v
 pytest tests/test_roi_crm.py -v
 pytest tests/test_github.py -v
 pytest tests/test_hex.py -v
@@ -1700,4 +1703,4 @@ For issues or questions:
 
 ## Version
 
-Current version: 0.8.0
+Current version: 0.10.0

@@ -4,15 +4,21 @@ Reusable Python library providing unified connection management for CCEF data in
 
 ## Retry predicates: 429 only
 
-Every service retry decorator in `core/retry.py` retries rate limiting and nothing
-else. **Never put bare `Exception` in a retry predicate** — it silently retries auth
-failures, 404s, non-idempotent writes, and bugs in our own code, and because
-`reraise=True` still surfaces the right exception the only symptom is unexplained
-slowness. Six decorators carried it until 2026-08-20; the suite was spending tens of
-minutes in `time.sleep` and still passing. Full rationale in the header comment of
-`core/retry.py`. Tests that exercise a decorated retry path must patch
-`tenacity.nap.time.sleep`; `pytest-timeout` caps every test at 10s to catch the ones
-that don't.
+Every service retry decorator in `core/retry.py` retries rate limiting (429) and
+nothing else — no exceptions, as of 0.10.0. **Never put bare `Exception` in a retry
+predicate** — it silently retries auth failures, 404s, non-idempotent writes, and bugs
+in our own code, and because `reraise=True` still surfaces the right exception the only
+symptom is unexplained slowness. Six decorators carried it until 2026-08-20; the suite
+was spending tens of minutes in `time.sleep` and still passing.
+
+**Also don't put our `ConnectionError` in a predicate.** It reads like "retry transient
+network failures", but the `requests`-based connectors wrap BOTH a genuine transport
+failure and any 4xx/5xx response in that one class, so retrying it means retrying 404s
+and bad credentials. That's what PTV did until 0.10.0.
+
+Full rationale in the header comment of `core/retry.py`. Tests that exercise a decorated
+retry path must patch `tenacity.nap.time.sleep`; `pytest-timeout` caps every test at 10s
+to catch the ones that don't.
 
 ## Zendesk connector — read by default, narrow writes
 
