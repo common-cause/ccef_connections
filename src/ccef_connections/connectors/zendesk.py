@@ -501,9 +501,38 @@ class ZendeskConnector(BaseConnection):
         return self._paginate("/triggers.json", resource_key="triggers")
 
     @retry_zendesk_operation
+    def list_trigger_categories(self) -> List[Dict[str, Any]]:
+        """
+        Return all trigger categories.
+
+        Categories are the display grouping in Admin Center, and their order
+        (plus a trigger's position within one) determines the sequence triggers
+        fire in -- so on a shared instance, reading them is how you find out
+        whether your rules run before or after someone else's.
+
+        Returns:
+            List of trigger category records
+        """
+        return self._paginate("/trigger_categories", resource_key="trigger_categories")
+
+    @retry_zendesk_operation
     def list_automations(self) -> List[Dict[str, Any]]:
         """Return all automations. Returns: list of automation records."""
         return self._paginate("/automations.json", resource_key="automations")
+
+    @retry_zendesk_operation
+    def list_schedules(self) -> List[Dict[str, Any]]:
+        """
+        Return all business-hours schedules.
+
+        SLA targets with ``business_hours: true`` are measured against the
+        ticket's schedule, so a policy that assumes business hours is only
+        meaningful if a schedule exists.
+
+        Returns:
+            List of schedule records
+        """
+        return self._paginate("/business_hours/schedules.json", resource_key="schedules")
 
     @retry_zendesk_operation
     def list_macros(self) -> List[Dict[str, Any]]:
@@ -836,6 +865,11 @@ class ZendeskConnector(BaseConnection):
 
         ``conditions`` and ``actions`` are replaced wholesale by what you send.
 
+        Note that triggers CANNOT post ticket comments -- ``comment_value`` and
+        ``comment_mode_is_public`` are macro-only actions. A trigger that needs
+        to tell the requester something has to use the ``notification_user``
+        action (an email) instead.
+
         Args:
             trigger_id: The trigger's numeric id
             trigger: The properties to change
@@ -846,3 +880,154 @@ class ZendeskConnector(BaseConnection):
         return self._request(
             "PUT", f"/triggers/{trigger_id}.json", json_body={"trigger": trigger}
         )["trigger"]
+
+    @retry_zendesk_operation
+    def create_trigger_category(self, category: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a trigger category.
+
+        Worth doing before creating triggers on a shared instance: a trigger
+        created without a ``category_id`` lands in whichever category Zendesk
+        picks, which is routinely someone else's.
+
+        Args:
+            category: The payload, e.g. ``{"name": "Campaigns", "position": 7}``
+
+        Returns:
+            The created trigger category record
+        """
+        return self._request(
+            "POST", "/trigger_categories", json_body={"trigger_category": category}
+        )["trigger_category"]
+
+    @retry_zendesk_operation
+    def update_trigger_category(
+        self, category_id: int, category: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Update one trigger category (PATCH, not PUT).
+
+        WARNING: ``position`` is instance-wide ordering. Moving your category
+        earlier re-orders everyone else's relative to it, which changes the
+        sequence their triggers fire in. Prefer appending at the end.
+
+        Args:
+            category_id: The category's numeric id
+            category: The properties to change
+
+        Returns:
+            The updated trigger category record
+        """
+        return self._request(
+            "PATCH",
+            f"/trigger_categories/{category_id}",
+            json_body={"trigger_category": category},
+        )["trigger_category"]
+
+    @retry_zendesk_operation
+    def get_view(self, view_id: int) -> Dict[str, Any]:
+        """
+        Return a single view.
+
+        Args:
+            view_id: The view's numeric id
+
+        Returns:
+            The view record
+        """
+        return self._request("GET", f"/views/{view_id}.json")["view"]
+
+    @retry_zendesk_operation
+    def create_view(self, view: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a view.
+
+        A view with no ``restriction`` is visible to every agent in the
+        instance, including other teams'. Pass a Group restriction to keep a
+        team's queue out of everyone else's sidebar.
+
+        Custom ticket fields are referenced in ``execution.columns``,
+        ``group_by`` and ``sort_by`` by their numeric field id.
+
+        Args:
+            view: The payload (title, conditions, execution, restriction, ...)
+
+        Returns:
+            The created view record
+        """
+        return self._request("POST", "/views.json", json_body={"view": view})["view"]
+
+    @retry_zendesk_operation
+    def update_view(self, view_id: int, view: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Update one view.
+
+        ``conditions`` and ``execution`` are replaced wholesale by what you
+        send, so send the full intended state rather than a partial edit.
+
+        Args:
+            view_id: The view's numeric id
+            view: The properties to change
+
+        Returns:
+            The updated view record
+        """
+        return self._request("PUT", f"/views/{view_id}.json", json_body={"view": view})[
+            "view"
+        ]
+
+    @retry_zendesk_operation
+    def get_sla_policy(self, policy_id: int) -> Dict[str, Any]:
+        """
+        Return a single SLA policy.
+
+        Args:
+            policy_id: The policy's numeric id
+
+        Returns:
+            The SLA policy record
+        """
+        return self._request("GET", f"/slas/policies/{policy_id}.json")["sla_policy"]
+
+    @retry_zendesk_operation
+    def create_sla_policy(self, policy: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create an SLA policy.
+
+        SLA policies are evaluated in ``position`` order and the FIRST matching
+        policy wins -- a policy is not additive with the ones before it. On a
+        shared instance, scope the ``filter`` narrowly (e.g. to your own
+        ``ticket_form_id`` or group) and append at the end, or you will start
+        capturing another team's tickets and silently displace their targets.
+
+        ``business_hours`` is set per metric inside ``policy_metrics`` and
+        requires a schedule to exist.
+
+        Args:
+            policy: The payload (title, filter, policy_metrics, ...)
+
+        Returns:
+            The created SLA policy record
+        """
+        return self._request(
+            "POST", "/slas/policies.json", json_body={"sla_policy": policy}
+        )["sla_policy"]
+
+    @retry_zendesk_operation
+    def update_sla_policy(self, policy_id: int, policy: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Update one SLA policy.
+
+        ``filter`` and ``policy_metrics`` are replaced wholesale by what you
+        send: a metric you omit is removed from the policy.
+
+        Args:
+            policy_id: The policy's numeric id
+            policy: The properties to change
+
+        Returns:
+            The updated SLA policy record
+        """
+        return self._request(
+            "PUT", f"/slas/policies/{policy_id}.json", json_body={"sla_policy": policy}
+        )["sla_policy"]

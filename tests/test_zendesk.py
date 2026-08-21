@@ -514,6 +514,12 @@ class TestWrites:
             "update_ticket_form",
             "create_trigger",
             "update_trigger",
+            "create_trigger_category",
+            "update_trigger_category",
+            "create_view",
+            "update_view",
+            "create_sla_policy",
+            "update_sla_policy",
         }
         actual = {
             name
@@ -611,6 +617,84 @@ class TestConfigWrites:
 
         assert mock_request.call_args[0][0] == "PUT"
         assert mock_request.call_args[0][1].endswith("/triggers/7.json")
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_create_trigger_category(self, mock_request, connected_connector):
+        mock_request.return_value = _make_response(
+            200, {"trigger_category": {"id": "12", "name": "Campaigns"}}
+        )
+        result = connected_connector.create_trigger_category(
+            {"name": "Campaigns", "position": 7}
+        )
+
+        assert result["name"] == "Campaigns"
+        assert mock_request.call_args[0][0] == "POST"
+        assert mock_request.call_args[0][1].endswith("/trigger_categories")
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_update_trigger_category_uses_patch(self, mock_request, connected_connector):
+        """The trigger-categories endpoint takes PATCH, not PUT, unlike the rest."""
+        mock_request.return_value = _make_response(200, {"trigger_category": {"id": "12"}})
+        connected_connector.update_trigger_category(12, {"position": 8})
+
+        assert mock_request.call_args[0][0] == "PATCH"
+        assert mock_request.call_args[0][1].endswith("/trigger_categories/12")
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_create_view(self, mock_request, connected_connector):
+        mock_request.return_value = _make_response(200, {"view": {"id": 21}})
+        body = {"title": "Campaigns: Open by due date", "active": True}
+        result = connected_connector.create_view(body)
+
+        assert result == {"id": 21}
+        assert mock_request.call_args[0][0] == "POST"
+        assert mock_request.call_args[0][1].endswith("/views.json")
+        assert mock_request.call_args[1]["json"] == {"view": body}
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_update_view_targets_one_id(self, mock_request, connected_connector):
+        mock_request.return_value = _make_response(200, {"view": {"id": 21}})
+        connected_connector.update_view(21, {"active": False})
+
+        assert mock_request.call_args[0][0] == "PUT"
+        assert mock_request.call_args[0][1].endswith("/views/21.json")
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_get_view_unwraps(self, mock_request, connected_connector):
+        mock_request.return_value = _make_response(
+            200, {"view": {"id": 21, "title": "Campaigns: Day-of"}}
+        )
+        assert connected_connector.get_view(21)["title"] == "Campaigns: Day-of"
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_create_sla_policy(self, mock_request, connected_connector):
+        mock_request.return_value = _make_response(200, {"sla_policy": {"id": 31}})
+        body = {
+            "title": "Campaigns: request turnaround",
+            "filter": {"all": [], "any": []},
+            "policy_metrics": [],
+        }
+        result = connected_connector.create_sla_policy(body)
+
+        assert result == {"id": 31}
+        assert mock_request.call_args[0][0] == "POST"
+        assert mock_request.call_args[0][1].endswith("/slas/policies.json")
+        assert mock_request.call_args[1]["json"] == {"sla_policy": body}
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_update_sla_policy_targets_one_id(self, mock_request, connected_connector):
+        mock_request.return_value = _make_response(200, {"sla_policy": {"id": 31}})
+        connected_connector.update_sla_policy(31, {"position": 2})
+
+        assert mock_request.call_args[0][0] == "PUT"
+        assert mock_request.call_args[0][1].endswith("/slas/policies/31.json")
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_get_sla_policy_unwraps(self, mock_request, connected_connector):
+        mock_request.return_value = _make_response(
+            200, {"sla_policy": {"id": 31, "title": "Campaigns"}}
+        )
+        assert connected_connector.get_sla_policy(31)["title"] == "Campaigns"
 
     @patch("ccef_connections.connectors.zendesk.requests.request")
     def test_search_count_returns_int_only(self, mock_request, connected_connector):
