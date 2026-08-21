@@ -727,6 +727,57 @@ class ZendeskConnector(BaseConnection):
         """
         return self._request("GET", "/search/count.json", params={"query": query})["count"]
 
+    @retry_zendesk_operation
+    def list_ticket_comments(self, ticket_id: int) -> List[Dict[str, Any]]:
+        """
+        Return a ticket's comments, oldest first.
+
+        Needed to tell a requester-created ticket from an agent-created one:
+        only a public FIRST comment authored by the requester makes a ticket
+        behave like a real end-user submission, and ``first_reply_time`` never
+        activates without one.
+
+        Comment bodies are ticket content and may contain PII -- treat the
+        result as row-level data, don't persist it.
+
+        Args:
+            ticket_id: The ticket's numeric id
+
+        Returns:
+            List of comment records, oldest first
+        """
+        return self._paginate(
+            f"/tickets/{ticket_id}/comments.json", resource_key="comments"
+        )
+
+    @retry_zendesk_operation
+    def list_ticket_metric_events(
+        self, start_time: int, params: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Return SLA metric events from the incremental export, oldest first.
+
+        This is the ONLY reliable way to confirm an SLA policy actually applied.
+        Requesting ``?include=slas`` on a ticket returns null even for a working
+        policy (IT's own 2025 policy behaves identically), so verification means
+        looking for an ``apply_sla`` event against the ticket here.
+
+        Args:
+            start_time: Unix timestamp to export from (exclusive)
+            params: Optional extra query parameters
+
+        Returns:
+            List of metric event records, oldest first
+        """
+        query: Dict[str, Any] = {"start_time": start_time}
+        if params:
+            query.update(params)
+        return self._paginate(
+            "/incremental/ticket_metric_events.json",
+            params=query,
+            resource_key="ticket_metric_events",
+        )
+
     # ── Tickets (write) ───────────────────────────────────────────────
     #
     # These require the 'read write' scope. The default 'read' scope is
