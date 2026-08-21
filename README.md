@@ -1158,6 +1158,7 @@ Reads:
 
 - `get_me()` / `get_account_settings()` / `rate_limit_status()` - Acting user, account settings, and the most recent rate-limit headers seen.
 - `list_groups()`, `list_ticket_forms()`, `list_ticket_fields()`, `list_views()`, `list_triggers()`, `list_trigger_categories()`, `list_automations()`, `list_macros()`, `list_sla_policies()`, `list_schedules()`, `list_brands()`, `list_custom_roles()` - Configuration objects.
+- `list_help_center_categories()`, `list_help_center_sections()`, `list_help_center_articles()`, `get_help_center_article(id)`, `list_guide_permission_groups()`, `list_help_center_user_segments()` - Guide / help center content and its permission model. Note the split: content lives under `/help_center`, permission groups under `/guide`.
 - `get_ticket_field(field_id)` / `get_ticket_form(form_id)` / `get_view(view_id)` / `get_sla_policy(policy_id)` - A single config object by id.
 - `list_users(role=None)`, `list_agents()`, `list_organizations()` - People and orgs.
 - `get_ticket(ticket_id)`, `list_tickets(params=None)`, `list_group_tickets(group_id)` - Tickets.
@@ -1171,6 +1172,8 @@ Writes (require the read-write scope):
 - `create_ticket_field(field)` / `update_ticket_field(field_id, field)` / `update_ticket_form(form_id, form)` / `create_trigger(trigger)` / `update_trigger(trigger_id, trigger)` - Single-object config writes for reviewed config-as-code.
 - `create_trigger_category(category)` / `update_trigger_category(category_id, category)` - Trigger categories. **`update_` uses PATCH**, unlike every other mutator here, and `position` is instance-wide firing order — moving your category re-orders everyone else's relative to it, so prefer appending at the end.
 - `create_view(view)` / `update_view(view_id, view)` - Views. A view with no `restriction` is visible to *every* agent in the instance; pass a Group restriction to keep a team's queue out of other teams' sidebars. Custom fields are referenced in the output block by numeric field id.
+- `create_macro(macro)` / `update_macro(macro_id, macro)` - Macros. These are the ONLY way to post a ticket comment from saved config, since triggers cannot. An unrestricted macro appears in every agent's list, so pass a Group restriction on a shared instance.
+- `create_help_center_article(section_id, article)` / `update_help_center_article(article_id, article)` / `update_help_center_article_translation(article_id, locale, translation)` - Guide articles. `permission_group_id` is REQUIRED on create (read it from `list_guide_permission_groups`). Article **title and body live in a per-locale translation**, so editing text goes through the translation endpoint while `update_help_center_article` handles metadata (draft, section, user segment). `user_segment_id: None` means visible to anonymous visitors; `draft: True` stages content without publishing it into a shared help center.
 - `create_sla_policy(policy)` / `update_sla_policy(policy_id, policy)` - SLA policies. These are **first-match-wins in `position` order** and not additive, so scope the `filter` narrowly (your own form and/or group) and append at the end, or you will capture another team's tickets and silently displace their targets.
 
 **The write surface is deliberately narrow and pinned by a test.** Every config mutation targets ONE object by an explicit id the caller had to look up. There are **no deletes at all**, and nothing bulk or reconciling for config — an enumerate-config-and-write-it-back helper would be one bug away from clobbering IT's production helpdesk. `test_zendesk.py::test_write_surface_is_an_explicit_allowlist` fails if a mutator is added, so widening it takes a deliberate edit. Namespace policy (which objects a project may touch) belongs in that project's reviewed apply script, not here.
@@ -1180,6 +1183,8 @@ Writes (require the read-write scope):
 ⚠️ **Triggers cannot post ticket comments.** `comment_value` and `comment_mode_is_public` are macro-only actions; a trigger that needs to tell someone something must use the `notification_user` action (an email) instead.
 
 ⚠️ **Views take `output` on write but return `execution`.** Sending an `execution` block to `create_view`/`update_view` is *silently ignored* — you get Zendesk's default columns and no error. Inside `output`, `sort_by` must be a **string** even when it is a custom-field id (an int returns 400), while `columns` accepts ints.
+
+⚠️ **Guide rewrites the HTML you store.** Named entities become literal characters (`&ldquo;` → a curly quote) and the markup is re-flowed onto its own lines, so a byte comparison of an article body reports drift forever. Canonicalize (unescape entities, strip whitespace around tags) before diffing.
 
 ⚠️ **Round-tripping config is not byte-stable**, which matters if you diff live state against a desired state: Zendesk echoes back derived keys (`target_in_seconds` on SLA metrics, `parent_field_type` on form conditions), coerces a `""` condition value to `null` (e.g. "priority is not set"), and reorders form condition sets and their child fields. Normalize before comparing or your applier will report drift forever.
 

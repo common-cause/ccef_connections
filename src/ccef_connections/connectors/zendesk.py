@@ -539,6 +539,77 @@ class ZendeskConnector(BaseConnection):
         """Return all macros. Returns: list of macro records."""
         return self._paginate("/macros.json", resource_key="macros")
 
+    # ── Guide / help center (read) ────────────────────────────────────
+    #
+    # These live under /help_center (content) and /guide (permissions), NOT the
+    # usual ticketing paths.
+
+    @retry_zendesk_operation
+    def list_help_center_categories(self) -> List[Dict[str, Any]]:
+        """Return all help center categories. Returns: list of category records."""
+        return self._paginate("/help_center/categories.json", resource_key="categories")
+
+    @retry_zendesk_operation
+    def list_help_center_sections(self) -> List[Dict[str, Any]]:
+        """Return all help center sections. Returns: list of section records."""
+        return self._paginate("/help_center/sections.json", resource_key="sections")
+
+    @retry_zendesk_operation
+    def list_help_center_articles(self) -> List[Dict[str, Any]]:
+        """
+        Return all help center articles.
+
+        NOTE: bodies are included, so this is a heavy call on a real knowledge
+        base. Prefer ``get_help_center_article`` when you know the id.
+
+        Returns:
+            List of article records
+        """
+        return self._paginate("/help_center/articles.json", resource_key="articles")
+
+    @retry_zendesk_operation
+    def get_help_center_article(self, article_id: int) -> Dict[str, Any]:
+        """
+        Return a single help center article, including its body.
+
+        Args:
+            article_id: The article's numeric id
+
+        Returns:
+            The article record
+        """
+        return self._request("GET", f"/help_center/articles/{article_id}.json")["article"]
+
+    @retry_zendesk_operation
+    def list_guide_permission_groups(self) -> List[Dict[str, Any]]:
+        """
+        Return Guide permission groups (who may EDIT content).
+
+        ``permission_group_id`` is required when creating an article, so you
+        generally have to read this first.
+
+        Returns:
+            List of permission group records
+        """
+        return self._paginate(
+            "/guide/permission_groups.json", resource_key="permission_groups"
+        )
+
+    @retry_zendesk_operation
+    def list_help_center_user_segments(self) -> List[Dict[str, Any]]:
+        """
+        Return user segments (who may VIEW content).
+
+        An article's ``user_segment_id`` set to None means visible to everyone,
+        including anonymous visitors.
+
+        Returns:
+            List of user segment records
+        """
+        return self._paginate(
+            "/help_center/user_segments.json", resource_key="user_segments"
+        )
+
     @retry_zendesk_operation
     def list_sla_policies(self) -> List[Dict[str, Any]]:
         """Return all SLA policies. Returns: list of SLA policy records."""
@@ -975,6 +1046,112 @@ class ZendeskConnector(BaseConnection):
         return self._request("PUT", f"/views/{view_id}.json", json_body={"view": view})[
             "view"
         ]
+
+    @retry_zendesk_operation
+    def create_macro(self, macro: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a macro.
+
+        Macros are the ONLY way to post a ticket comment from saved config --
+        triggers cannot (`comment_value` / `comment_value_html` are macro-only
+        actions). A macro with no ``restriction`` appears in every agent's macro
+        list, so pass a Group restriction on a shared instance.
+
+        Args:
+            macro: The payload (title, actions, restriction, ...)
+
+        Returns:
+            The created macro record
+        """
+        return self._request("POST", "/macros.json", json_body={"macro": macro})["macro"]
+
+    @retry_zendesk_operation
+    def update_macro(self, macro_id: int, macro: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Update one macro. ``actions`` are replaced wholesale by what you send.
+
+        Args:
+            macro_id: The macro's numeric id
+            macro: The properties to change
+
+        Returns:
+            The updated macro record
+        """
+        return self._request(
+            "PUT", f"/macros/{macro_id}.json", json_body={"macro": macro}
+        )["macro"]
+
+    @retry_zendesk_operation
+    def create_help_center_article(
+        self, section_id: int, article: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Create a help center article inside a section.
+
+        ``permission_group_id`` is REQUIRED (read it from
+        ``list_guide_permission_groups``), and ``locale`` must be set.
+        ``user_segment_id`` controls who can see it -- None means everyone,
+        including anonymous visitors. Pass ``draft: True`` to stage content
+        without publishing it to a shared help center.
+
+        Args:
+            section_id: The section to create the article in
+            article: The payload (title, body, locale, permission_group_id, ...)
+
+        Returns:
+            The created article record
+        """
+        return self._request(
+            "POST",
+            f"/help_center/sections/{section_id}/articles.json",
+            json_body={"article": article},
+        )["article"]
+
+    @retry_zendesk_operation
+    def update_help_center_article(
+        self, article_id: int, article: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Update one article's METADATA (draft, section, segment, labels, ...).
+
+        Title and body are per-locale translations and are NOT reliably updated
+        here -- use ``update_help_center_article_translation`` for those.
+
+        Args:
+            article_id: The article's numeric id
+            article: The properties to change
+
+        Returns:
+            The updated article record
+        """
+        return self._request(
+            "PUT", f"/help_center/articles/{article_id}.json", json_body={"article": article}
+        )["article"]
+
+    @retry_zendesk_operation
+    def update_help_center_article_translation(
+        self, article_id: int, locale: str, translation: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Update an article's title/body for one locale.
+
+        Article text lives in a *translation* record, not on the article, which
+        is why editing the body goes through this endpoint rather than
+        ``update_help_center_article``.
+
+        Args:
+            article_id: The article's numeric id
+            locale: Locale code, e.g. 'en-us'
+            translation: The properties to change (title, body, draft)
+
+        Returns:
+            The updated translation record
+        """
+        return self._request(
+            "PUT",
+            f"/help_center/articles/{article_id}/translations/{locale}.json",
+            json_body={"translation": translation},
+        )["translation"]
 
     @retry_zendesk_operation
     def get_sla_policy(self, policy_id: int) -> Dict[str, Any]:

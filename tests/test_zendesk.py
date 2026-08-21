@@ -520,6 +520,11 @@ class TestWrites:
             "update_view",
             "create_sla_policy",
             "update_sla_policy",
+            "create_macro",
+            "update_macro",
+            "create_help_center_article",
+            "update_help_center_article",
+            "update_help_center_article_translation",
         }
         actual = {
             name
@@ -695,6 +700,82 @@ class TestConfigWrites:
             200, {"sla_policy": {"id": 31, "title": "Campaigns"}}
         )
         assert connected_connector.get_sla_policy(31)["title"] == "Campaigns"
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_create_macro(self, mock_request, connected_connector):
+        mock_request.return_value = _make_response(200, {"macro": {"id": 41}})
+        body = {"title": "Campaigns: Ask for more information", "actions": []}
+        result = connected_connector.create_macro(body)
+
+        assert result == {"id": 41}
+        assert mock_request.call_args[0][0] == "POST"
+        assert mock_request.call_args[0][1].endswith("/macros.json")
+        assert mock_request.call_args[1]["json"] == {"macro": body}
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_update_macro_targets_one_id(self, mock_request, connected_connector):
+        mock_request.return_value = _make_response(200, {"macro": {"id": 41}})
+        connected_connector.update_macro(41, {"active": False})
+
+        assert mock_request.call_args[0][0] == "PUT"
+        assert mock_request.call_args[0][1].endswith("/macros/41.json")
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_create_article_posts_to_its_section(self, mock_request, connected_connector):
+        mock_request.return_value = _make_response(200, {"article": {"id": 51}})
+        body = {"title": "Which request type?", "body": "<p>x</p>", "locale": "en-us"}
+        result = connected_connector.create_help_center_article(77, body)
+
+        assert result == {"id": 51}
+        assert mock_request.call_args[0][0] == "POST"
+        assert mock_request.call_args[0][1].endswith(
+            "/help_center/sections/77/articles.json"
+        )
+        assert mock_request.call_args[1]["json"] == {"article": body}
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_update_article_metadata(self, mock_request, connected_connector):
+        mock_request.return_value = _make_response(200, {"article": {"id": 51}})
+        connected_connector.update_help_center_article(51, {"draft": False})
+
+        assert mock_request.call_args[0][0] == "PUT"
+        assert mock_request.call_args[0][1].endswith("/help_center/articles/51.json")
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_update_article_translation_carries_the_text(
+        self, mock_request, connected_connector
+    ):
+        """Article text lives in a per-locale translation, not on the article."""
+        mock_request.return_value = _make_response(200, {"translation": {"id": 61}})
+        connected_connector.update_help_center_article_translation(
+            51, "en-us", {"title": "T", "body": "<p>b</p>"}
+        )
+
+        assert mock_request.call_args[0][0] == "PUT"
+        assert mock_request.call_args[0][1].endswith(
+            "/help_center/articles/51/translations/en-us.json"
+        )
+        assert mock_request.call_args[1]["json"] == {
+            "translation": {"title": "T", "body": "<p>b</p>"}
+        }
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_get_article_unwraps(self, mock_request, connected_connector):
+        mock_request.return_value = _make_response(
+            200, {"article": {"id": 51, "title": "x"}}
+        )
+        assert connected_connector.get_help_center_article(51)["title"] == "x"
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_guide_permission_groups_use_the_guide_path(
+        self, mock_request, connected_connector
+    ):
+        """Permissions live under /guide, content under /help_center."""
+        mock_request.return_value = _make_response(
+            200, {"permission_groups": [{"id": 1, "name": "Admins"}]}
+        )
+        assert connected_connector.list_guide_permission_groups()[0]["name"] == "Admins"
+        assert "/guide/permission_groups.json" in mock_request.call_args[0][1]
 
     @patch("ccef_connections.connectors.zendesk.requests.request")
     def test_search_count_returns_int_only(self, mock_request, connected_connector):
