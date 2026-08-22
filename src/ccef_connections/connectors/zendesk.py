@@ -621,6 +621,23 @@ class ZendeskConnector(BaseConnection):
         return self._paginate("/brands.json", resource_key="brands")
 
     @retry_zendesk_operation
+    def list_recipient_addresses(self) -> List[Dict[str, Any]]:
+        """
+        Return the account's support (email recipient) addresses.
+
+        This is how to tell whether an intake alias actually exists as a
+        Zendesk channel, and whether its forwarding/SPF/DNS checks passed --
+        an address can be present but ``forwarding_status`` 'failed', in which
+        case mail to it never becomes a ticket.
+
+        Returns:
+            List of recipient address records
+        """
+        return self._paginate(
+            "/recipient_addresses.json", resource_key="recipient_addresses"
+        )
+
+    @retry_zendesk_operation
     def list_custom_roles(self) -> List[Dict[str, Any]]:
         """
         Return all custom agent roles.
@@ -726,6 +743,48 @@ class ZendeskConnector(BaseConnection):
             The match count
         """
         return self._request("GET", "/search/count.json", params={"query": query})["count"]
+
+    @retry_zendesk_operation
+    def search(
+        self, query: str, max_results: int = 100, sort: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Run a Zendesk search and return up to ``max_results`` records.
+
+        Deliberately bounded. ``list_tickets`` paginates the WHOLE instance,
+        which on a shared instance means thousands of other teams' tickets and
+        a large slice of the shared rate budget; search plus a cap is how to
+        ask a narrow question ("tickets on our form since Monday") cheaply.
+
+        Results may be tickets, users or organizations depending on the query,
+        and ticket/user records carry row-level PII -- don't persist raw output.
+
+        Args:
+            query: A Zendesk search query (e.g. 'type:ticket created>2026-08-20')
+            max_results: Stop after this many records (pagination cap)
+            sort: Optional 'field asc'/'field desc', e.g. 'created_at desc'
+
+        Returns:
+            List of matching records, at most ``max_results`` long
+        """
+        params: Dict[str, Any] = {"query": query}
+        if sort:
+            field, _, order = sort.partition(" ")
+            params["sort_by"] = field
+            params["sort_order"] = order or "desc"
+
+        results: List[Dict[str, Any]] = []
+        next_target: Optional[str] = "/search.json"
+        first = True
+        while next_target and len(results) < max_results:
+            data = self._request("GET", next_target, params=params if first else None)
+            first = False
+            if data is None:
+                break
+            results.extend(data.get("results") or [])
+            next_target = self._next_url(data)
+
+        return results[:max_results]
 
     @retry_zendesk_operation
     def list_ticket_comments(self, ticket_id: int) -> List[Dict[str, Any]]:

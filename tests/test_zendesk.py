@@ -785,6 +785,90 @@ class TestConfigWrites:
             "query": "type:ticket ticket_form_id:5"
         }
 
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_search_passes_query_and_splits_sort(self, mock_request, connected_connector):
+        mock_request.return_value = _make_response(
+            200, {"results": [{"id": 1}], "next_page": None}
+        )
+        assert connected_connector.search("type:ticket", sort="created_at desc") == [
+            {"id": 1}
+        ]
+        assert mock_request.call_args[1]["params"] == {
+            "query": "type:ticket",
+            "sort_by": "created_at",
+            "sort_order": "desc",
+        }
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_search_defaults_sort_order_when_only_a_field_is_given(
+        self, mock_request, connected_connector
+    ):
+        mock_request.return_value = _make_response(200, {"results": [], "next_page": None})
+        connected_connector.search("type:ticket", sort="created_at")
+        assert mock_request.call_args[1]["params"]["sort_order"] == "desc"
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_search_omits_sort_keys_entirely_when_unsorted(
+        self, mock_request, connected_connector
+    ):
+        mock_request.return_value = _make_response(200, {"results": [], "next_page": None})
+        connected_connector.search("type:ticket")
+        assert mock_request.call_args[1]["params"] == {"query": "type:ticket"}
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_search_stops_paginating_at_max_results(
+        self, mock_request, connected_connector
+    ):
+        """The cap is the point of this method.
+
+        `list_tickets` walks the WHOLE instance, which on CCEF's shared Zendesk
+        is thousands of other teams' tickets and a big slice of a rate budget
+        IT is already tripping 429s on. A search that ignored max_results would
+        be no better.
+        """
+        page2 = "https://test.zendesk.com/api/v2/search.json?page=2"
+        mock_request.side_effect = [
+            _make_response(200, {"results": [{"id": 1}, {"id": 2}], "next_page": page2}),
+            _make_response(200, {"results": [{"id": 3}], "next_page": None}),
+        ]
+        assert connected_connector.search("type:ticket", max_results=2) == [
+            {"id": 1},
+            {"id": 2},
+        ]
+        assert mock_request.call_count == 1, "should not have fetched page 2"
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_search_truncates_an_overshooting_page(
+        self, mock_request, connected_connector
+    ):
+        """Zendesk's page size is fixed, so the last page routinely overshoots."""
+        mock_request.return_value = _make_response(
+            200, {"results": [{"id": 1}, {"id": 2}, {"id": 3}], "next_page": None}
+        )
+        assert connected_connector.search("type:ticket", max_results=2) == [
+            {"id": 1},
+            {"id": 2},
+        ]
+
+    @patch("ccef_connections.connectors.zendesk.requests.request")
+    def test_list_recipient_addresses(self, mock_request, connected_connector):
+        """Support addresses, with the status fields that decide whether mail to
+        an address actually becomes a ticket."""
+        mock_request.return_value = _make_response(
+            200,
+            {
+                "recipient_addresses": [
+                    {
+                        "email": "campaigns@example.zendesk.com",
+                        "forwarding_status": "verified",
+                    }
+                ],
+                "next_page": None,
+            },
+        )
+        addresses = connected_connector.list_recipient_addresses()
+        assert addresses[0]["forwarding_status"] == "verified"
+
 
 # ── Scope handling ────────────────────────────────────────────────────
 
