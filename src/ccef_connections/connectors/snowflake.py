@@ -7,7 +7,7 @@ datasets.
 
 This connector replaces the ``scripts/sfquery.py`` shim that had been copied into five
 separate projects (``financial-reconciliation``, ``snowflake-research``,
-``roi-campaign-sources``, ``major-donor-briefs``, ``unite-dashboards``). :meth:`query`
+``roi-campaign-sources``, ``major-donors``, ``unite-dashboards``). :meth:`query`
 returns ``(columns, rows)`` deliberately, matching that shim's ``run()`` so migration is
 a change of import rather than a change of shape.
 
