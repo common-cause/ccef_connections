@@ -46,10 +46,11 @@ if TYPE_CHECKING:
     from .connectors.snowflake import SnowflakeConnector
     from .connectors.stripe import StripeConnector
     from .connectors.tatango import TatangoConnector
+    from .connectors.user_profile import UserProfileConnector
     from .connectors.zendesk import ZendeskConnector
     from .connectors.zoom import ZoomConnector
 
-__version__ = "0.11.0"
+__version__ = "0.12.0"
 
 # Lazy attribute -> (module, required extra or None).
 # Connectors with extra=None need only the base install (requests).
@@ -73,6 +74,7 @@ _LAZY_IMPORTS = {
     "SnowflakeConnector": ("ccef_connections.connectors.snowflake", "snowflake"),
     "StripeConnector": ("ccef_connections.connectors.stripe", None),
     "TatangoConnector": ("ccef_connections.connectors.tatango", None),
+    "UserProfileConnector": ("ccef_connections.connectors.user_profile", None),
     "ZendeskConnector": ("ccef_connections.connectors.zendesk", None),
     "ZoomConnector": ("ccef_connections.connectors.zoom", None),
     # ConfigManager reads config from Google Sheets, so it needs the sheets extra
@@ -100,6 +102,7 @@ __all__ = [
     "SnowflakeConnector",
     "StripeConnector",
     "TatangoConnector",
+    "UserProfileConnector",
     "ZendeskConnector",
     "ZoomConnector",
     # Configuration

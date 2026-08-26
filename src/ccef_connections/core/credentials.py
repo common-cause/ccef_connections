@@ -309,6 +309,38 @@ class CredentialManager:
         """
         return str(self.get_credential("GEOCODIO_API_KEY"))
 
+    def get_user_profile_credentials(self) -> Dict[str, str]:
+        """
+        Get the Power Automate user-profile flow endpoint and automation key.
+
+        The URL is held in ``USER_PROFILE_API_URI`` rather than under the
+        ``_PASSWORD`` convention, because it is an address rather than a
+        secret in the usual sense -- though it is treated as one, since it
+        embeds the Power Platform environment ID, the workflow GUID and a SAS
+        signature.
+
+        Surrounding quotes are stripped from the URL. An unbalanced trailing
+        quote from a hand-edited .env lands inside the SAS signature and makes
+        every call fail with a 401 that looks like a bad key.
+
+        Returns:
+            Dict with ``uri`` and ``key``
+
+        Raises:
+            CredentialError: If either value is missing
+        """
+        uri = os.getenv("USER_PROFILE_API_URI")
+        if not uri or not uri.strip():
+            raise CredentialError(
+                "Required credential not found: USER_PROFILE_API_URI\n"
+                "Please set the environment variable USER_PROFILE_API_URI "
+                "or add it to your .env file."
+            )
+        return {
+            "uri": uri.strip().strip('"').strip("'"),
+            "key": str(self.get_credential("USER_PROFILE_API_CREDENTIALS")).strip(),
+        }
+
     def get_resend_api_key(self) -> str:
         """
         Get the Resend transactional-email API key.

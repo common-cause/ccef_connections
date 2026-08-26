@@ -1582,6 +1582,25 @@ SMS broadcast platform (Tatango, now MomoGood), Messaging API v2. Base URL: `htt
 
 - `list_lists(**params)` / `get_list(list_id=None)` - List config; useful fields `opt_in_type` (`single`/`double`) and `counts`
 
+### UserProfileConnector
+
+Staff lookups against Entra ID via the Power Automate "User Profile Info to API" flow — who someone reports to, their job title and department, and who belongs to a security group. Added 0.10.0 (cc-notifications, verified 2026-08-26).
+
+**Credentials:** `USER_PROFILE_API_URI` (the flow's direct-invoke URL, which embeds the environment ID, workflow GUID and a SAS signature) + `USER_PROFILE_API_CREDENTIALS_PASSWORD` (the automation key).
+
+**Auth:** The automation key goes in an `x-automation-key` header. It must **not** go in `Authorization` — that collides with the URL's SAS scheme and the gateway rejects the call with `DirectApiRequestHasMoreThanOneAuthorization`. Surrounding quotes are stripped from the URL on load, because an unbalanced trailing quote from a hand-edited `.env` lands inside the SAS signature and produces a 401 that reads like a bad key.
+
+**Constructor:** `UserProfileConnector(cache=True)` — memoises profile and roster lookups per instance, since resolving one person's contacts asks about the same managers and group members repeatedly. Pass `cache=False` for a long-lived instance that must see live changes.
+
+**⚠ Two behaviours that shape the API:**
+
+- **A 502 is an answer, not an error.** The flow has no error path. A 502 `NoResponse` means the address does not resolve in Entra, *or* the person resolves but has no manager (the top of the org chart does this), *or* the request was malformed. It fails fast (~0.8s) and identically every time, so the connector returns `None` and deliberately does **not** retry.
+- **`state` is not always a state.** For non-state staff it carries a department — "Direct Marketing", "Foundations", "Major Donor". Callers meaning a US state must check against a real state list, never against "is non-blank".
+
+- `get_profile(upn)` - One person by email/UPN, case-insensitive. Returns a dict with `requestedUser`, `managerDisplayName`, `managerMail`, `jobTitle`, `state`; or `None` on no answer
+- `get_group_roster(group_email)` - Member addresses for a security group, e.g. `"st-nc@commoncause.org"`. Reads `members[].mail`; the group's own address is not included. Empty list if the group does not resolve
+- `manager_chain(upn, max_hops=8, include_self=True)` - Walk upward, feeding each `managerMail` back in as the next lookup. Each entry is a profile dict plus a `upn` key naming the address looked up. Stops at the top of the org chart (whose own lookup gives no answer) or on a cycle
+
 ### ConfigManager
 
 - `get_config()` - Get all configuration
@@ -1902,4 +1921,4 @@ For issues or questions:
 
 ## Version
 
-Current version: 0.11.0
+Current version: 0.12.0
