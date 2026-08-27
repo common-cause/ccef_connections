@@ -302,6 +302,13 @@ class SheetsWriterConnector(BaseConnection):
             worksheet_name: Tab name to format
         """
         ws = spreadsheet.worksheet(worksheet_name)
+        # Sheets rejects freezing every visible row ("You can't freeze all
+        # visible rows"), which is what a header-only tab is -- the normal
+        # state of a newly provisioned export with no data rows yet. Grow by
+        # one so the freeze is always legal; the blank row is harmless and the
+        # next write_worksheet resizes to fit real data.
+        if ws.row_count <= 1:
+            ws.resize(rows=2)
         ws.freeze(rows=1)
         ws.format("1:1", {"textFormat": {"bold": True}})
         logger.debug(f"Formatted header row in '{worksheet_name}'")
