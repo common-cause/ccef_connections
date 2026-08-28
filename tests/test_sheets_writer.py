@@ -623,12 +623,32 @@ class TestDeleteWorksheetIfExists:
 class TestFormatHeaderRow:
     def test_freezes_and_bolds_row_one(self, connected_connector, spreadsheet):
         ws = MagicMock()
+        ws.row_count = 10
         spreadsheet.worksheet.return_value = ws
 
         connected_connector.format_header_row(spreadsheet, "Data")
 
+        ws.resize.assert_not_called()
         ws.freeze.assert_called_once_with(rows=1)
         ws.format.assert_called_once_with("1:1", {"textFormat": {"bold": True}})
+
+    def test_grows_a_header_only_tab_before_freezing(
+        self, connected_connector, spreadsheet
+    ):
+        """Sheets rejects freezing every visible row.
+
+        A newly provisioned export whose source has no rows yet is a 1-row
+        grid holding only its header, so the freeze would 400. Grow to 2
+        first; the blank row is harmless and the next write resizes to fit.
+        """
+        ws = MagicMock()
+        ws.row_count = 1
+        spreadsheet.worksheet.return_value = ws
+
+        connected_connector.format_header_row(spreadsheet, "Data")
+
+        ws.resize.assert_called_once_with(rows=2)
+        ws.freeze.assert_called_once_with(rows=1)
 
     def test_propagates_worksheet_not_found(self, connected_connector, spreadsheet):
         spreadsheet.worksheet.side_effect = _worksheet_not_found()
