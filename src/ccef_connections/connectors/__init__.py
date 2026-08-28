@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from .snowflake import SnowflakeConnector
     from .stripe import StripeConnector
     from .tatango import TatangoConnector
+    from .user_profile import UserProfileConnector
     from .zendesk import ZendeskConnector
     from .zoom import ZoomConnector
 
@@ -53,6 +54,7 @@ _LAZY_IMPORTS = {
     "SnowflakeConnector": ("snowflake", "snowflake"),
     "StripeConnector": ("stripe", None),
     "TatangoConnector": ("tatango", None),
+    "UserProfileConnector": ("user_profile", None),
     "ZendeskConnector": ("zendesk", None),
     "ZoomConnector": ("zoom", None),
 }
