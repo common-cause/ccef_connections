@@ -262,7 +262,18 @@ class SheetsWriterConnector(BaseConnection):
         ws = self.get_or_add_worksheet(spreadsheet, worksheet_name)
         ws.clear()
         if data:
-            ws.resize(rows=max(len(data), 1), cols=max(len(data[0]), 1))
+            # Sheets rejects a resize that would delete every non-frozen row,
+            # so a tab with a frozen header cannot shrink to one row -- which
+            # is exactly a header-only export whose source has no rows yet.
+            # format_header_row freezes row 1 and grows such a tab to 2; this
+            # is the other half of that, keeping the tab legal on every run
+            # after the first. The spare row is blank, and the next write with
+            # real data resizes over it.
+            frozen_rows = ws.frozen_row_count or 0
+            ws.resize(
+                rows=max(len(data), frozen_rows + 1, 1),
+                cols=max(len(data[0]), 1),
+            )
             ws.update(
                 range_name="A1",
                 values=data,

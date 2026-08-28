@@ -505,6 +505,7 @@ class TestGetOrAddWorksheet:
 class TestWriteWorksheet:
     def test_clears_resizes_and_writes(self, connected_connector, spreadsheet):
         ws = MagicMock()
+        ws.frozen_row_count = 0
         spreadsheet.worksheet.return_value = ws
         data = [["h1", "h2"], [1, 2], [3, 4]]
 
@@ -518,6 +519,7 @@ class TestWriteWorksheet:
 
     def test_defaults_to_raw_input(self, connected_connector, spreadsheet):
         ws = MagicMock()
+        ws.frozen_row_count = 0
         spreadsheet.worksheet.return_value = ws
 
         connected_connector.write_worksheet(spreadsheet, "Data", [["=A1+1"]])
@@ -527,6 +529,7 @@ class TestWriteWorksheet:
     def test_user_entered_is_passed_through(self, connected_connector, spreadsheet):
         """USER_ENTERED is what makes formula strings evaluate."""
         ws = MagicMock()
+        ws.frozen_row_count = 0
         spreadsheet.worksheet.return_value = ws
 
         connected_connector.write_worksheet(
@@ -538,6 +541,7 @@ class TestWriteWorksheet:
     def test_empty_data_clears_without_writing(self, connected_connector, spreadsheet):
         """No rows means clear the tab and stop — resize(rows=0) would raise."""
         ws = MagicMock()
+        ws.frozen_row_count = 0
         spreadsheet.worksheet.return_value = ws
 
         connected_connector.write_worksheet(spreadsheet, "Data", [])
@@ -551,14 +555,47 @@ class TestWriteWorksheet:
     ):
         """A row with no cells must not resize to 0 columns."""
         ws = MagicMock()
+        ws.frozen_row_count = 0
         spreadsheet.worksheet.return_value = ws
 
         connected_connector.write_worksheet(spreadsheet, "Data", [[]])
 
         ws.resize.assert_called_once_with(rows=1, cols=1)
 
+    def test_keeps_a_spare_row_past_a_frozen_header(
+        self, connected_connector, spreadsheet
+    ):
+        """Sheets rejects deleting every non-frozen row.
+
+        A header-only export whose source has no rows yet is one row of data
+        on a tab whose row 1 format_header_row already froze. Shrinking it to
+        one row 400s, so the write must leave the freeze a row to sit above.
+        """
+        ws = MagicMock()
+        ws.frozen_row_count = 1
+        spreadsheet.worksheet.return_value = ws
+
+        connected_connector.write_worksheet(spreadsheet, "Data", [["h1", "h2"]])
+
+        ws.resize.assert_called_once_with(rows=2, cols=2)
+
+    def test_real_data_is_unaffected_by_a_frozen_header(
+        self, connected_connector, spreadsheet
+    ):
+        """The spare row is only for the degenerate case, never padding."""
+        ws = MagicMock()
+        ws.frozen_row_count = 1
+        spreadsheet.worksheet.return_value = ws
+
+        connected_connector.write_worksheet(
+            spreadsheet, "Data", [["h1"], ["a"], ["b"]]
+        )
+
+        ws.resize.assert_called_once_with(rows=3, cols=1)
+
     def test_creates_the_worksheet_when_missing(self, connected_connector, spreadsheet):
         new_ws = MagicMock()
+        new_ws.frozen_row_count = 0
         spreadsheet.worksheet.side_effect = _worksheet_not_found()
         spreadsheet.add_worksheet.return_value = new_ws
 
@@ -574,6 +611,7 @@ class TestWriteWorksheet:
         self, connected_connector, spreadsheet
     ):
         ws = MagicMock()
+        ws.frozen_row_count = 0
         spreadsheet.worksheet.return_value = ws
 
         connected_connector.write_worksheet(
