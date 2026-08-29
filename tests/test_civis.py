@@ -486,7 +486,7 @@ class TestJobs:
         connected._session.request.return_value = _list_page([])
         connected.list_jobs(scheduled=True)
         params = connected._session.request.call_args.kwargs["params"]
-        assert params["scheduled"] is True
+        assert params["scheduled"] == "true"
         assert "state" not in params
         assert "author" not in params
 
@@ -495,7 +495,35 @@ class TestJobs:
             [{"id": 1, "author": {"id": ME_ID}}]
         )
         connected.list_scheduled_jobs()
-        assert connected._session.request.call_args.kwargs["params"]["scheduled"] is True
+        assert connected._session.request.call_args.kwargs["params"]["scheduled"] == "true"
+
+    def test_list_jobs_archived_false_is_lowercased(self, connected):
+        """A Python bool must reach the wire as "false", not "False".
+
+        Civis rejects the capitalized form outright — `400 Invalid archived
+        status 'False'` — so `archived=False`, which every docstring here offers,
+        was a guaranteed error until _lower_bools existed. Found 2026-08-28 when a
+        duplicate-name guard swallowed that 400 and read it as "no duplicate",
+        then created a real duplicate of a production job.
+        """
+        connected._session.request.return_value = _list_page([])
+        connected.list_jobs(q="Some Job", archived=False)
+        params = connected._session.request.call_args.kwargs["params"]
+        assert params["archived"] == "false"
+        assert params["q"] == "Some Job"
+
+    def test_json_bodies_keep_real_booleans(self, connected):
+        """The lowercasing is a QUERY-param concern only.
+
+        A JSON body wants a real `false` — `{"scheduled": "false"}` is a string
+        where the API expects a boolean — so the coercion must not reach it.
+        """
+        connected._session.request.return_value = _make_response(
+            200, {"id": 7, "name": "x", "schedule": {"scheduled": False}}
+        )
+        connected.update_container(7, schedule={"scheduled": False})
+        body = connected._session.request.call_args.kwargs["json"]
+        assert body["schedule"]["scheduled"] is False
 
     def test_list_scheduled_jobs_mine_only_filters_by_author(self, connected):
         connected._me_cache = _me()

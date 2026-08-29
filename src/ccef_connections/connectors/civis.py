@@ -224,7 +224,7 @@ class CivisConnector(BaseConnection):
             resp = self._session.request(
                 method,
                 url,
-                params=params,
+                params=_lower_bools(params),
                 json=json_body,
                 timeout=self._timeout,
             )
@@ -1477,6 +1477,28 @@ UNSCHEDULED: Dict[str, Any] = {"scheduled": False}
 def _clean(**kwargs: Any) -> Dict[str, Any]:
     """Drop None values, so optional args don't become literal query params."""
     return {k: v for k, v in kwargs.items() if v is not None}
+
+
+def _lower_bools(params: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """
+    Lowercase boolean QUERY params — ``True`` -> ``"true"``.
+
+    ``requests`` stringifies ``True`` as ``"True"``, which Civis accepts on some
+    filters and rejects on others: ``archived=False`` comes back
+    ``400 Invalid archived status 'False'``, so every docstring here promising
+    ``archived=False`` works was wrong until this existed. Found 2026-08-28, when
+    a duplicate-name check swallowed that 400 and read the answer as "no
+    duplicate" — the guard failed open and created a real job.
+
+    Applied at the query-param boundary only. JSON bodies keep real booleans,
+    which is what the API wants there (``{"scheduled": false}``).
+    """
+    if not params:
+        return params
+    return {
+        k: ("true" if v is True else "false" if v is False else v)
+        for k, v in params.items()
+    }
 
 
 def _camelize(fields: Dict[str, Any]) -> Dict[str, Any]:
