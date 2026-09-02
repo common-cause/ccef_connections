@@ -183,16 +183,24 @@ class TestHealthCheck:
     def test_health_check_not_connected(self, connector):
         assert connector.health_check() is False
 
-    @patch("ccef_connections.connectors.roi_crm.requests.request")
-    def test_health_check_success(self, mock_request, connected_connector):
-        mock_request.return_value = _make_response(200, {"status": "ok"})
+    @patch("ccef_connections.connectors.roi_crm.requests.get")
+    def test_health_check_success(self, mock_get, connected_connector):
+        # /ping/ answers with plain text, not JSON -- mock the real shape.
+        mock_get.return_value = _make_response(200, text="pong!")
 
         assert connected_connector.health_check() is True
-        assert "/ping/" in mock_request.call_args[0][1]
+        assert "/ping/" in mock_get.call_args[0][0]
 
-    @patch("ccef_connections.connectors.roi_crm.requests.request")
-    def test_health_check_failure(self, mock_request, connected_connector):
-        mock_request.side_effect = requests.ConnectionError("timeout")
+    @patch("ccef_connections.connectors.roi_crm.requests.get")
+    def test_health_check_failure(self, mock_get, connected_connector):
+        mock_get.side_effect = requests.ConnectionError("timeout")
+
+        assert connected_connector.health_check() is False
+
+    @patch("ccef_connections.connectors.roi_crm.requests.get")
+    def test_health_check_rejects_non_pong_body(self, mock_get, connected_connector):
+        """Regression: a JSON-shaped mock hid that /ping/ returns text."""
+        mock_get.return_value = _make_response(500, text="Internal Server Error")
 
         assert connected_connector.health_check() is False
 
@@ -306,6 +314,54 @@ class TestRequest:
             connected_connector._request("GET", "/donors/")
 
         assert exc_info.value.retry_after == 30
+
+    @patch("ccef_connections.connectors.roi_crm.requests.request")
+    def test_400_with_429_body_raises_rate_limit(self, mock_request, connected_connector):
+        """ROI throttles with HTTP 400 carrying a 429 in the body, not a 429 status."""
+        mock_request.return_value = _make_response(
+            400,
+            {"statusCode": 429, "title": "TOO MANY REQUESTS",
+             "detail": "API Rate Limit Exceeded. Please try again later.",
+             "instanceCode": "RATE_1001"},
+        )
+
+        with pytest.raises(RateLimitError):
+            connected_connector._request("GET", "/donors/1/phones/")
+
+    @patch("ccef_connections.connectors.roi_crm.requests.request")
+    def test_400_with_rate_instance_code_raises_rate_limit(
+        self, mock_request, connected_connector
+    ):
+        mock_request.return_value = _make_response(
+            400, {"instanceCode": "RATE_1001", "title": "TOO MANY REQUESTS"}
+        )
+
+        with pytest.raises(RateLimitError):
+            connected_connector._request("GET", "/donors/1/phones/")
+
+    @patch("ccef_connections.connectors.roi_crm.requests.request")
+    def test_ordinary_400_still_raises_connection_error(
+        self, mock_request, connected_connector
+    ):
+        """A genuine validation 400 must NOT be mistaken for a throttle."""
+        mock_request.return_value = _make_response(
+            400, {"statusCode": 400, "title": "BAD REQUEST",
+                  "detail": "invalid phone_type_code"}
+        )
+
+        with pytest.raises(ConnectionError):
+            connected_connector._request("GET", "/donors/1/phones/")
+
+    @patch("ccef_connections.connectors.roi_crm.requests.request")
+    def test_400_with_non_json_body_raises_connection_error(
+        self, mock_request, connected_connector
+    ):
+        resp = _make_response(400, text="upstream said no")
+        resp.json.side_effect = ValueError("not json")
+        mock_request.return_value = resp
+
+        with pytest.raises(ConnectionError):
+            connected_connector._request("GET", "/donors/1/phones/")
 
     @patch("ccef_connections.connectors.roi_crm.requests.request")
     def test_500_raises_connection_error(self, mock_request, connected_connector):
@@ -766,7 +822,16 @@ class TestContactInfo:
         mock_request.return_value = _make_response(
             200,
             {
-                "items": [{"number": "202-555-1234", "type": "home"}],
+                "items": [
+                    {
+                        "phone_id": "8913164",
+                        "phone_number": "2025551234",
+                        "phone_type_code": "HOME1",
+                        "phone_type": "Primary Home",
+                        "ok_to_use": "Y",
+                        "bad_phone_number": "N",
+                    }
+                ],
                 "next": None,
             },
         )
@@ -774,7 +839,57 @@ class TestContactInfo:
         result = connected_connector.list_phones(12345)
 
         assert len(result) == 1
+        assert result[0]["phone_number"] == "2025551234"
+        assert result[0]["phone_type_code"] == "HOME1"
         assert "/donors/12345/phones/" in mock_request.call_args[0][1]
+
+    @patch("ccef_connections.connectors.roi_crm.requests.request")
+    def test_create_phone(self, mock_request, connected_connector):
+        mock_request.return_value = _make_response(
+            201, {"phone_id": 5501, "phone_number": "7813968787"}
+        )
+
+        result = connected_connector.create_phone(
+            82720199,
+            phone_number="7813968787",
+            phone_type_code="CELL_1",
+            ok_to_use="Y",
+            bad_phone_number="N",
+            origination_vendor="MY_VENDOR_CODE",
+        )
+
+        assert result["phone_id"] == 5501
+        assert mock_request.call_args[0][0] == "POST"
+        assert "/donors/82720199/phones/" in mock_request.call_args[0][1]
+        body = mock_request.call_args.kwargs["json"]
+        assert body["phone_number"] == "7813968787"
+        assert body["phone_type_code"] == "CELL_1"
+        assert body["origination_vendor"] == "MY_VENDOR_CODE"
+
+    @patch("ccef_connections.connectors.roi_crm.requests.request")
+    def test_create_phone_empty_response(self, mock_request, connected_connector):
+        """A 204 from ROI yields {} rather than None."""
+        mock_request.return_value = _make_response(204)
+
+        result = connected_connector.create_phone(
+            82720199, phone_number="7813968787", phone_type_code="CELL_1"
+        )
+
+        assert result == {}
+
+    @patch("ccef_connections.connectors.roi_crm.requests.request")
+    def test_create_phone_does_not_retry_on_4xx(
+        self, mock_request, connected_connector
+    ):
+        """A rejected POST must fail once, not be replayed into duplicates."""
+        mock_request.return_value = _make_response(400, text="invalid phone_type_code")
+
+        with pytest.raises(ConnectionError):
+            connected_connector.create_phone(
+                82720199, phone_number="781396878", phone_type_code="NOPE"
+            )
+
+        assert mock_request.call_count == 1
 
 
 # ── Comments & Flags ──────────────────────────────────────────────────

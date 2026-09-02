@@ -99,16 +99,18 @@ class ROICRMConnector(BaseConnection):
         """
         Check if the ROI CRM connection is healthy.
 
-        Verifies the token is valid by calling GET /ping/.
+        Verifies the token is valid by calling GET /ping/, which answers with
+        the plain string "pong!" — not JSON. It therefore cannot go through
+        ``_request()``, whose ``resp.json()`` raises on a text body and made
+        this method return False even on a healthy connection.
 
         Returns:
-            True if connected and API is reachable, False otherwise
+            True if connected and the API answers the ping, False otherwise
         """
         if not self._is_connected or not self._access_token:
             return False
         try:
-            self._request("GET", "/ping/")
-            return True
+            return "pong" in self.ping().lower()
         except Exception:
             return False
 
@@ -240,7 +242,25 @@ class ROICRMConnector(BaseConnection):
                     "ROI CRM authentication failed after token refresh"
                 )
 
-        if resp.status_code == 429:
+        # ROI signals throttling with HTTP 400 and a 429 in the JSON body
+        # (title "TOO MANY REQUESTS", instanceCode "RATE_1001") -- not with a 429
+        # status. Observed live 2026-09-01. Checking only resp.status_code made a
+        # throttle look like a permanent 400, so it raised ConnectionError, which
+        # retry_roi_crm_operation deliberately does not retry: every throttled row
+        # failed outright instead of backing off. Detect both shapes.
+        throttled = resp.status_code == 429
+        if not throttled and resp.status_code == 400:
+            try:
+                body = resp.json()
+            except ValueError:
+                body = {}
+            if isinstance(body, dict):
+                throttled = (
+                    str(body.get("statusCode")) == "429"
+                    or str(body.get("instanceCode", "")).startswith("RATE_")
+                )
+
+        if throttled:
             retry_after = int(resp.headers.get("Retry-After", 30))
             raise RateLimitError(
                 f"ROI CRM rate limit exceeded, retry after {retry_after}s",
@@ -844,14 +864,54 @@ class ROICRMConnector(BaseConnection):
             donor_id: The ROI CRM donor ID
 
         Returns:
-            List of phone dicts
+            List of phone dicts. Verified live 2026-09-01 — keys are
+            ``phone_id``, ``phone_number``, ``phone_type_code`` (e.g.
+            ``"HOME1"``), ``phone_type`` (display, e.g. ``"Primary Home"``),
+            ``ok_to_use``, ``bad_phone_number``, ``roi_id``,
+            ``roi_family_id``, ``last_change_date``, ``last_change_user``
+            and ``links``. Note the read shape matches the write shape for
+            the four fields they share.
 
         Examples:
             >>> phones = connector.list_phones(12345)
             >>> for p in phones:
-            ...     print(p["number"], p["type"])
+            ...     print(p["phone_number"], p["phone_type_code"])
         """
         return self._paginate(f"/donors/{donor_id}/phones/")
+
+    @retry_roi_crm_operation
+    def create_phone(self, donor_id: int, **kwargs: Any) -> Dict[str, Any]:
+        """
+        Add a phone number to a donor record.
+
+        Field names below are from ROI's OpenAPI schema for
+        ``POST /donors/{roi_family_id}/phones/``. ``donor_id`` is the
+        ROI Family ID (the individual), not the household ROI ID.
+
+        Args:
+            donor_id: The ROI Family ID
+            **kwargs: Phone field values — ``phone_number`` (digits only,
+                no punctuation), ``phone_type_code`` (e.g. ``"CELL_1"``),
+                ``ok_to_use`` (``"Y"``/``"N"``), ``bad_phone_number``
+                (``"Y"``/``"N"``), ``origination_vendor``,
+                ``last_change_user_extra``, ``verification_date``
+                (ISO 8601, e.g. ``"2026-08-31T23:49:41.993Z"``)
+
+        Returns:
+            The newly created phone dict
+
+        Examples:
+            >>> phone = connector.create_phone(
+            ...     82720199,
+            ...     phone_number="7813968787",
+            ...     phone_type_code="CELL_1",
+            ...     ok_to_use="Y",
+            ...     bad_phone_number="N",
+            ...     origination_vendor="MY_VENDOR_CODE",
+            ... )
+        """
+        result = self._request("POST", f"/donors/{donor_id}/phones/", json_body=kwargs)
+        return result or {}
 
     # ── Comments & Flags ──────────────────────────────────────────────
 

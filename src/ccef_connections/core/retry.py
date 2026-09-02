@@ -406,7 +406,19 @@ def retry_roi_crm_operation(func: Callable) -> Callable:
     """
     Decorator for ROI CRM API operations with retry logic.
 
-    ROI CRM allows 500 requests per 5-minute rolling window (429 on breach).
+    ROI CRM is documented as allowing 500 requests per 5-minute rolling window
+    (429 on breach). Measured 2026-09-01: 614 GETs in a 300s rolling window
+    — 23% over that cap — drew no 429 and no throttling, so the documented
+    limit is not enforced as written at this rate. Sequential throughput is
+    bounded by latency (~470 ms/call, ~2.1 req/s), not by the cap.
+
+    Concurrency measured the same day, 860 GETs, zero 429s: 4 workers
+    9.0 req/s, 8 workers 16.7, 16 workers 29.3, 32 workers 36.0. The knee is
+    at **16** — past it, median latency doubles (492 → 784 ms) for only 1.2x
+    more throughput. A pooled Session is worth a further 1.12x (461 → 411 ms)
+    since this module calls requests.request() per call and pays a fresh TLS
+    handshake each time. All of this is measured on READS; concurrent write
+    behavior is not yet characterised.
     Only retries on RateLimitError — the only genuinely transient condition.
     ConnectionError wraps HTTP 4xx/5xx responses and should fail immediately
     so the caller sees the real error without waiting through exponential backoff.

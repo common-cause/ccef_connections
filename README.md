@@ -622,6 +622,17 @@ pledges = roi.list_pledges(donor_id)
 new_pledge = roi.create_pledge(donor_id, amount=25.00, frequency="monthly")
 roi.update_pledge(donor_id, new_pledge["pledge_id"], amount=50.00)
 
+# Contact info — phones
+phones = roi.list_phones(donor_id)
+roi.create_phone(
+    donor_id,
+    phone_number="7813968787",     # digits only, no punctuation
+    phone_type_code="CELL_1",
+    ok_to_use="Y",
+    bad_phone_number="N",
+    origination_vendor="MY_VENDOR_CODE",
+)
+
 # Look up memberships
 memberships = roi.list_memberships(donor_id)
 mvault = roi.get_mvault(donor_id)
