@@ -784,10 +784,17 @@ class TestMoveToFolder:
 
 
 class TestRetry:
-    """These methods share retry_google_operation, which retries 429 only.
+    """These methods share retry_google_operation: 429 plus transient 5xx.
 
-    Writes here are not idempotent — get_or_create_spreadsheet can create a
-    duplicate spreadsheet — so anything other than a rate limit must surface on
+    The 5xx exemption (0.13.0) is specific to gspread, because gspread is the
+    only vendor library here with no retry of its own and a Sheets 503 is a
+    routine blip. It is safe because every gspread method under that decorator
+    is replay-safe: the creates are lookup-then-create (the decorator wraps the
+    WHOLE method, so a replay redoes the lookup and adopts anything a lost
+    response already created), and the writes clear-and-rewrite or set a single
+    cell, so they converge.
+
+    Anything permanent — 4xx, 501, WorksheetNotFound — must still surface on
     the first attempt rather than be replayed.
     """
 
@@ -812,16 +819,53 @@ class TestRetry:
         assert result is spreadsheet
         assert connected_connector._client.open_by_key.call_count == 2
 
+    @pytest.mark.parametrize("status_code", [500, 502, 503, 504])
     @patch("tenacity.nap.time.sleep")
-    def test_does_not_retry_gspread_500(self, mock_sleep, connected_connector):
-        """A 5xx leaves the write in an unknown state — do not replay it."""
-        connected_connector._client.open_by_key.side_effect = self._api_error(500)
+    def test_retries_transient_gspread_5xx(
+        self, mock_sleep, status_code, connected_connector, spreadsheet
+    ):
+        """Regression guard for the ep-syncs volunteer-sheets job.
+
+        It failed on 5 of 8 consecutive nightly runs with a bare
+        ``APIError: [503]: The service is currently unavailable.`` and no 429
+        anywhere. Before 0.13.0 this surfaced on the first attempt, took the
+        target down, and exited the job non-zero — a red job most mornings,
+        which is indistinguishable from a real failure.
+        """
+        connected_connector._client.open_by_key.side_effect = [
+            self._api_error(status_code),
+            spreadsheet,
+        ]
+
+        result = connected_connector.open_spreadsheet(SAMPLE_SPREADSHEET_ID)
+
+        assert result is spreadsheet
+        assert connected_connector._client.open_by_key.call_count == 2
+
+    @patch("tenacity.nap.time.sleep")
+    def test_does_not_retry_gspread_501(self, mock_sleep, connected_connector):
+        """501 Not Implemented is a permanent answer, unlike 500/502/503/504."""
+        connected_connector._client.open_by_key.side_effect = self._api_error(501)
 
         with pytest.raises(gspread.exceptions.APIError):
             connected_connector.open_spreadsheet(SAMPLE_SPREADSHEET_ID)
 
         assert connected_connector._client.open_by_key.call_count == 1
         assert not mock_sleep.called
+
+    @patch("tenacity.nap.time.sleep")
+    def test_gives_up_after_five_attempts(self, mock_sleep, connected_connector):
+        """A persistent 503 still terminates — it does not retry forever.
+
+        stop_after_attempt(5) with reraise=True, so the caller gets the real
+        APIError and can fall back to its own handling.
+        """
+        connected_connector._client.open_by_key.side_effect = self._api_error(503)
+
+        with pytest.raises(gspread.exceptions.APIError):
+            connected_connector.open_spreadsheet(SAMPLE_SPREADSHEET_ID)
+
+        assert connected_connector._client.open_by_key.call_count == 5
 
     @patch("tenacity.nap.time.sleep")
     def test_does_not_retry_gspread_404(self, mock_sleep, connected_connector):

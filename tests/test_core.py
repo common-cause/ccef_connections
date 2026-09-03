@@ -18,7 +18,7 @@ from ccef_connections.exceptions import (
 from ccef_connections.core.base import BaseConnection
 from ccef_connections.core.credentials import CredentialManager
 from ccef_connections.core.retry import (
-    _is_google_rate_limit,
+    _is_google_retryable,
     retry_action_network_operation,
     retry_airtable_operation,
     retry_google_operation,
@@ -578,11 +578,15 @@ class TestServiceRetryDecorators:
 
 
 class TestGoogleRateLimitPredicate:
-    """_is_google_rate_limit matches 429 from either Google client library.
+    """_is_google_retryable matches what is safe to replay for Google APIs.
 
     The Google connectors do not translate HTTP status into our exception
     hierarchy — gspread and google-cloud-bigquery raise their own types — so
     this predicate is what keeps 429 handling alive for them.
+
+    Since 0.13.0 it also matches transient 5xx from gspread, and the asymmetry
+    with api_core is the point of several tests below: BigQuery's DML methods
+    share this decorator, so a 5xx there must NOT be replayed.
     """
 
     @staticmethod
@@ -598,39 +602,56 @@ class TestGoogleRateLimitPredicate:
         return APIError(response)
 
     def test_matches_our_rate_limit_error(self):
-        assert _is_google_rate_limit(RateLimitError("slow down")) is True
+        assert _is_google_retryable(RateLimitError("slow down")) is True
 
     def test_matches_api_core_too_many_requests(self):
         from google.api_core.exceptions import TooManyRequests
 
-        assert _is_google_rate_limit(TooManyRequests("429")) is True
+        assert _is_google_retryable(TooManyRequests("429")) is True
 
     def test_does_not_match_api_core_service_unavailable(self):
-        """503 leaves the request in an unknown state — not safe to replay."""
+        """A 503 through api_core is NOT safe to replay, unlike the gspread one.
+
+        BigQueryConnector.query / execute_dml / insert_rows sit under the same
+        decorator and carry MERGE/INSERT, so replaying a 5xx there could
+        double-apply a write. google-cloud-bigquery also retries transient
+        errors itself, so nothing is lost by declining here. This asymmetry is
+        deliberate — see _GSPREAD_TRANSIENT_STATUSES.
+        """
         from google.api_core.exceptions import ServiceUnavailable
 
-        assert _is_google_rate_limit(ServiceUnavailable("503")) is False
+        assert _is_google_retryable(ServiceUnavailable("503")) is False
 
     def test_matches_gspread_429(self):
-        assert _is_google_rate_limit(self._gspread_api_error(429)) is True
+        assert _is_google_retryable(self._gspread_api_error(429)) is True
 
-    @pytest.mark.parametrize("status_code", [400, 403, 404, 500, 503])
-    def test_does_not_match_other_gspread_statuses(self, status_code):
-        assert _is_google_rate_limit(self._gspread_api_error(status_code)) is False
+    @pytest.mark.parametrize("status_code", [500, 502, 503, 504])
+    def test_matches_transient_gspread_5xx(self, status_code):
+        """gspread has no retry of its own and a Sheets 503 is a routine blip.
+
+        Regression guard for the ep-syncs volunteer-sheets job, which failed on
+        5 of 8 consecutive nightly runs with a bare 503 and no 429 in sight.
+        """
+        assert _is_google_retryable(self._gspread_api_error(status_code)) is True
+
+    @pytest.mark.parametrize("status_code", [400, 403, 404, 501])
+    def test_does_not_match_permanent_gspread_statuses(self, status_code):
+        """4xx will never succeed on attempt 2; 501 is a permanent answer."""
+        assert _is_google_retryable(self._gspread_api_error(status_code)) is False
 
     def test_does_not_match_gspread_worksheet_not_found(self):
         from gspread.exceptions import WorksheetNotFound
 
-        assert _is_google_rate_limit(WorksheetNotFound("Missing")) is False
+        assert _is_google_retryable(WorksheetNotFound("Missing")) is False
 
     def test_does_not_match_our_connection_error(self):
-        assert _is_google_rate_limit(ConnectionError("Not connected")) is False
+        assert _is_google_retryable(ConnectionError("Not connected")) is False
 
     @pytest.mark.parametrize(
         "exc", [Exception("unexpected"), KeyError("k"), TypeError("t")]
     )
     def test_does_not_match_generic_exceptions(self, exc):
-        assert _is_google_rate_limit(exc) is False
+        assert _is_google_retryable(exc) is False
 
     def test_degrades_gracefully_without_the_google_extras(self, monkeypatch):
         """core.retry is imported by the base install, where neither the sheets
@@ -653,8 +674,8 @@ class TestGoogleRateLimitPredicate:
 
         assert retry_module._google_vendor_types() == {"api_core": (), "gspread": None}
         # Our own RateLimitError still matches; nothing else does.
-        assert retry_module._is_google_rate_limit(RateLimitError("slow down")) is True
-        assert retry_module._is_google_rate_limit(Exception("boom")) is False
+        assert retry_module._is_google_retryable(RateLimitError("slow down")) is True
+        assert retry_module._is_google_retryable(Exception("boom")) is False
 
 
 class TestLazyImportRegistration:

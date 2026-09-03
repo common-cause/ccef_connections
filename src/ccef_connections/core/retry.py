@@ -29,18 +29,30 @@ logger = logging.getLogger(__name__)
 
 # ── What is safe to retry ────────────────────────────────────────────────────
 #
-# Every decorator below retries rate limiting (HTTP 429) and nothing else.
-# That is deliberate and applies across all services:
+# Every decorator below retries rate limiting (HTTP 429), and — for gspread
+# alone — transient 5xx. Nothing else. That is deliberate and applies across
+# all services:
 #
 #   * A 429 means the request was *rejected* — nothing was applied server-side,
 #     so replaying it cannot duplicate an effect. Safe to retry.
 #   * A 4xx (auth, not-found, validation) will never succeed on attempt 2.
 #     Retrying only delays the error message that says what to fix.
 #   * A 5xx leaves the request in an *unknown* state. Several methods here are
-#     not idempotent — SheetsWriterConnector.get_or_create_spreadsheet,
-#     AirtableConnector.batch_upsert, ActionNetworkConnector.create_person —
-#     so replaying a 5xx risks a duplicate write. Surface it and let the caller
-#     decide.
+#     not idempotent — AirtableConnector.batch_upsert,
+#     ActionNetworkConnector.create_person — so replaying a 5xx risks a
+#     duplicate write. Surface it and let the caller decide.
+#
+#     ONE BOUNDED EXEMPTION (added 0.13.0): transient 5xx from **gspread**
+#     specifically is retried. See _GSPREAD_TRANSIENT_STATUSES for the full
+#     argument. In short: gspread is the only vendor library here with no
+#     retry of its own, a Sheets 503 is a routine multi-times-a-day blip
+#     rather than a real fault, and every method this decorator guards on the
+#     gspread side is replay-safe — the creates are all lookup-then-create and
+#     the writes all converge. The exemption is deliberately NOT extended to
+#     the api_core path, because BigQuery's `query`/`execute_dml`/`insert_rows`
+#     sit under the same decorator and carry MERGE/INSERT that must never be
+#     blindly replayed (and google-cloud-bigquery already retries transient
+#     errors itself). Do not widen this to a general "retry 5xx" rule.
 #   * An exception from our own code (KeyError, TypeError, AttributeError) is a
 #     bug. Retrying it turns an instant traceback into a 30-second wait that
 #     reads like a network problem.
@@ -55,7 +67,7 @@ _GOOGLE_VENDOR_TYPES: Optional[Dict[str, Any]] = None
 
 def _google_vendor_types() -> Dict[str, Any]:
     """
-    Lazily resolve the vendor exception types that mean "Google said 429".
+    Lazily resolve the vendor exception types the Google retry predicate needs.
 
     This module is imported by the base install, where neither the ``sheets``
     extra (gspread) nor the ``bigquery`` extra (google-cloud-bigquery) is
@@ -85,9 +97,35 @@ def _google_vendor_types() -> Dict[str, Any]:
     return _GOOGLE_VENDOR_TYPES
 
 
-def _is_google_rate_limit(exc: BaseException) -> bool:
+# Transient Sheets/Drive server errors, retried for gspread ONLY.
+#
+# WHY THIS EXISTS: ep-syncs' volunteer-sheets job failed on 5 of 8 consecutive
+# nightly runs (2026-08-28..09-03) with
+# ``APIError: [503]: The service is currently unavailable.`` — never a 429. It
+# makes ~700 Sheets/Drive calls per run across 173 spreadsheets, so even a
+# fraction-of-a-percent 503 rate reliably kills one or two targets a night and
+# exits the job non-zero. Re-running the failed targets minutes later succeeds
+# every time. Google does not promise otherwise: a 503 on Sheets means "try
+# again", not "something is wrong with your request".
+#
+# WHY IT IS SAFE HERE, method by method — everything this decorator guards on
+# the gspread side either reads, or converges on replay:
+#   * get_or_create_spreadsheet / get_or_add_worksheet — lookup-then-create,
+#     and the decorator wraps the WHOLE method, so a replay redoes the lookup
+#     and adopts the object a lost response may have already created.
+#   * write_worksheet — clear-then-write of the full contents. Converges.
+#   * update_cell — sets one cell to one value. Last write wins.
+#   * delete_worksheet_if_exists — conditional; a replay is a no-op.
+#   * format_header_row / move_to_folder — declarative, idempotent.
+#   * open_spreadsheet / get_range / get_all_values / get_*_as_dicts — reads.
+#
+# 501 (Not Implemented) is deliberately absent: it is a permanent answer.
+_GSPREAD_TRANSIENT_STATUSES = frozenset({500, 502, 503, 504})
+
+
+def _is_google_retryable(exc: BaseException) -> bool:
     """
-    True only for a Google API rate-limit (429) failure.
+    True for a Google API failure that is safe to replay.
 
     Unlike the ``requests``-based connectors, the Google connectors do not
     translate HTTP status codes into our exception hierarchy — gspread and
@@ -100,11 +138,19 @@ def _is_google_rate_limit(exc: BaseException) -> bool:
     gspread signals status via ``APIError.response.status_code`` rather than a
     typed subclass, so it needs a value check rather than an isinstance check.
 
+    Matches:
+      * our own ``RateLimitError``
+      * api_core ``TooManyRequests`` (429) — and nothing else from api_core,
+        because BigQuery DML sits under this same decorator
+      * gspread ``APIError`` carrying 429, or a transient 5xx per
+        ``_GSPREAD_TRANSIENT_STATUSES`` (see the note above that block for the
+        per-method replay-safety argument)
+
     Args:
         exc: The exception raised by the decorated call
 
     Returns:
-        True if this is a 429 and therefore safe to replay
+        True if this failure is safe to replay
     """
     if isinstance(exc, RateLimitError):
         return True
@@ -118,7 +164,8 @@ def _is_google_rate_limit(exc: BaseException) -> bool:
     gspread_api_error = vendor["gspread"]
     if gspread_api_error is not None and isinstance(exc, gspread_api_error):
         response = getattr(exc, "response", None)
-        return getattr(response, "status_code", None) == 429
+        status = getattr(response, "status_code", None)
+        return status == 429 or status in _GSPREAD_TRANSIENT_STATUSES
 
     return False
 
@@ -234,14 +281,18 @@ def retry_google_operation(func: Callable) -> Callable:
     This implements a conservative retry strategy.
 
     Shared by SheetsConnector, SheetsWriterConnector, and BigQueryConnector.
-    Retries 429 only, via :func:`_is_google_rate_limit` — a predicate rather
-    than a type tuple because gspread reports status on
-    ``APIError.response.status_code`` instead of raising a typed subclass, and
-    because the vendor types live behind optional extras.
+    Retries via :func:`_is_google_retryable` — a predicate rather than a type
+    tuple because gspread reports status on ``APIError.response.status_code``
+    instead of raising a typed subclass, and because the vendor types live
+    behind optional extras.
 
-    gspread has no retry of its own, so this decorator is the only 429 handling
-    the Sheets connectors get. google-cloud-bigquery already retries transient
-    errors internally via ``DEFAULT_RETRY``.
+    Retries 429 from every source, **plus transient 5xx from gspread only**
+    (0.13.0; see ``_GSPREAD_TRANSIENT_STATUSES``). gspread has no retry of its
+    own, so this decorator is the only retry the Sheets connectors get, and a
+    Sheets 503 is a routine blip — it was failing ep-syncs' volunteer-sheets
+    job on most nights. google-cloud-bigquery already retries transient errors
+    internally via ``DEFAULT_RETRY``, and its DML methods sit under this
+    decorator, so the 5xx exemption stops at the gspread boundary.
 
     Args:
         func: The function to decorate
@@ -257,7 +308,7 @@ def retry_google_operation(func: Callable) -> Callable:
     return retry(
         stop=stop_after_attempt(5),
         wait=wait_exponential(multiplier=2.0, min=1.0, max=60.0),
-        retry=retry_if_exception(_is_google_rate_limit),
+        retry=retry_if_exception(_is_google_retryable),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )(func)

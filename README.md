@@ -946,24 +946,44 @@ This pattern is compatible with Civis Docker environments while also working sea
 ### Retry Logic
 
 All connectors retry with exponential backoff, and every one of them **retries rate
-limiting (HTTP 429) and nothing else.** That is a deliberate, library-wide rule with
-no exceptions:
+limiting (HTTP 429)** — plus, for gspread alone, transient 5xx. Nothing else. That is
+a deliberate, library-wide rule with exactly one bounded exception:
 
 - A **429** means the request was *rejected* — nothing was applied server-side, so
   replaying it cannot duplicate an effect. Safe to retry.
 - A **4xx** (auth, not-found, validation) will never succeed on attempt 2. Retrying
   only delays the error message that tells you what to fix.
 - A **5xx** leaves the request in an *unknown* state. Several methods here are not
-  idempotent (`get_or_create_spreadsheet`, `batch_upsert`, `create_person`), so
-  replaying a 5xx risks a duplicate write. It surfaces immediately instead.
+  idempotent (`batch_upsert`, `create_person`), so replaying a 5xx risks a duplicate
+  write. It surfaces immediately instead.
 - An exception from **our own code** (`KeyError`, `TypeError`) is a bug — it surfaces
   instantly rather than after five rounds of backoff that look like a network problem.
+
+**The one exception (0.13.0): transient 5xx from gspread** — 500, 502, 503, 504, but
+not 501 — is retried. Three things make it safe and necessary together, and removing
+any one of them should mean removing the exception:
+
+1. gspread is the only client library here with **no retry of its own**, so this
+   decorator is all it gets.
+2. A Sheets/Drive 503 is a **routine blip**, not a fault. ep-syncs' volunteer-sheets
+   job makes ~700 calls across 173 spreadsheets per run and was failing on 5 of 8
+   consecutive nights on a bare 503, with no 429 anywhere. Re-running the failed
+   targets minutes later succeeded every time.
+3. Every gspread method under `retry_google_operation` is **replay-safe**: the creates
+   are lookup-then-create and the decorator wraps the whole method, so a replay redoes
+   the lookup and adopts whatever a lost response already created; the writes
+   clear-and-rewrite or set a single cell, so they converge.
+
+It deliberately does **not** extend to the `google.api_core` path, even though that
+shares the same decorator: `BigQueryConnector.query` / `execute_dml` / `insert_rows`
+carry MERGE and INSERT that must never be blindly replayed, and google-cloud-bigquery
+already retries transient errors itself. Do not generalize this to a "retry 5xx" rule.
 
 Per-service detail:
 
 - **Airtable**: 5 retries on 429. Note pyairtable already retries 429 internally (urllib3 `Retry`, 5 attempts), so a rate limit is normally absorbed a layer below this one
 - **OpenAI**: 5 retries on 429. The `openai` SDK under langchain also retries 429/5xx/connection errors internally (`max_retries=2`)
-- **Google APIs** (Sheets, Sheets Writer, BigQuery): 5 retries on 429, matched via a predicate rather than an exception type — gspread reports status on `APIError.response.status_code` instead of raising a typed subclass. gspread is the only client library here with no retry of its own; google-cloud-bigquery retries transient errors internally via `DEFAULT_RETRY`
+- **Google APIs** (Sheets, Sheets Writer, BigQuery): 5 retries, matched via a predicate rather than an exception type — gspread reports status on `APIError.response.status_code` instead of raising a typed subclass. On 429 from any source, **and additionally on transient 5xx from gspread only** (see the exception above). gspread is the only client library here with no retry of its own; google-cloud-bigquery retries transient errors internally via `DEFAULT_RETRY`, and its DML methods share this decorator, which is why the 5xx allowance stops at the gspread boundary
 - **Snowflake**: 5 retries on 429, which in practice leaves very little — deliberately. `snowflake-connector-python` already retries transient network failures internally (as google-cloud-bigquery does), and a **statement timeout must never be retried**: `READER_WH` caps statements at 60s at the *warehouse* level and `PUBLIC` cannot raise it, so a query that timed out will time out again — retrying just spends three more minutes failing and makes a deterministic limit look flaky. IP-allowlist rejections, bad passwords, missing objects and read-only violations are all permanent until a human changes something
 - **Civis**: 5 retries on 429, honoring `Retry-After` plus a 2s buffer but **capped at 60s per wait** — the budget is 1000 requests per *hour*, so an exhausted quota can legitimately mean "come back in forty minutes", and sleeping that long inside a decorator looks like a hang and blows past any surrounding timeout. Bounded attempts, then the error surfaces. Reads are decorated; **writes are single-shot** — a retried `POST /runs` starts a second job run. ⚠ A 401 is *not* retried and usually means the **API key expired** (Civis caps them at 30 days), not a blip
 - **HelpScout**: 5 retries on 429, with auto token refresh on 401
