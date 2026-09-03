@@ -484,21 +484,37 @@ class CivisConnector(BaseConnection):
 
     def is_mine(self, obj: Dict[str, Any]) -> bool:
         """
-        True if the authenticated user authored this object.
+        True if the authenticated user owns this object.
 
         Cheap ownership check for write paths on a shared tenant: listing
         endpoints return other TMC member orgs' jobs, and the key carries full
         ``manage`` permission, so "can I write this" and "should I" differ.
 
+        Civis is not consistent about where it puts the owner. Jobs, scripts and
+        workflows carry an ``author`` block; **credentials carry ``user`` and
+        ``owner`` and no ``author`` at all**. This checked only ``author`` until
+        2026-09-02, so it silently returned False for every credential including
+        our own — an ownership guard that refuses everything looks exactly like
+        one that is working, right up until it blocks a rotation. All three
+        shapes are accepted now.
+
         Args:
-            obj: Any Civis object carrying an ``author`` block (job, script,
-                workflow, credential, ...).
+            obj: Any Civis object carrying an ``author`` or ``user`` block, or an
+                ``owner`` username (job, script, workflow, credential, ...).
 
         Returns:
-            True if ``obj["author"]["id"]`` is the authenticated user.
+            True if the object's owner is the authenticated user.
         """
-        author_id = (obj.get("author") or {}).get("id")
-        return author_id is not None and author_id == self.whoami().get("id")
+        me = self.whoami()
+        my_id, my_username = me.get("id"), me.get("username")
+        for key in ("author", "user"):
+            owner_id = (obj.get(key) or {}).get("id")
+            if owner_id is not None and owner_id == my_id:
+                return True
+        # `owner` is a bare username string, and is the only owner field on some
+        # credential payloads. Checked last: an id match is the stronger signal.
+        owner = obj.get("owner")
+        return bool(owner) and isinstance(owner, str) and owner == my_username
 
     @retry_civis_operation
     def spec(self, refresh: bool = False) -> Dict[str, Any]:

@@ -1107,7 +1107,7 @@ Thin REST client for the Civis Platform API — the platform CCEF's scheduled jo
 Identity, budget and discovery:
 
 - `whoami(refresh=False)` / `api_key_status(include_inactive=False)` - Authenticated user; live key expiry (with `days_remaining`, `key_count`, and `ambiguous` when more than one active key makes the answer uncertain).
-- `is_mine(obj)` - Whether an object was authored by the authenticated user.
+- `is_mine(obj)` - Whether the authenticated user owns an object. Handles both of Civis' ownership shapes: jobs, scripts and workflows carry `author`; credentials carry `user` and `owner` and no `author` at all.
 - `rate_limit()` - Last observed hourly budget.
 - `spec(refresh=False)` / `find_endpoints(needle)` - The platform's own OpenAPI spec (674 paths across 41 resources) and a search over it.
 - `request(method, path, params=None, json_body=None)` - Escape hatch for any endpoint with no typed method here. No retry, no guardrails.

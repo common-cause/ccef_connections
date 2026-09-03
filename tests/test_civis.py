@@ -477,6 +477,37 @@ class TestIdentityAndKeyStatus:
         ) is False
         assert connected.is_mine({}) is False
 
+    def test_is_mine_handles_credentials_which_carry_user_not_author(
+        self, connected
+    ):
+        """Credentials have no `author` block — they carry `user` and `owner`.
+
+        Regression for 2026-09-02: is_mine() checked only `author`, so it
+        returned False for our own credentials, and an ownership guard built on
+        it refused every legitimate rotation. Shape taken from live credential
+        39428.
+        """
+        connected._me_cache = _me()
+        own_credential = {
+            "id": 39428,
+            "name": "BQ com-dbt",
+            "type": "Custom",
+            "owner": "rkerth",
+            "user": {"id": ME_ID, "username": "rkerth"},
+        }
+        assert connected.is_mine(own_credential) is True
+
+        # owner username alone is enough when no id block is present
+        assert connected.is_mine({"id": 1, "owner": "rkerth"}) is True
+
+        # a neighbour's credential is still refused on both fields
+        assert connected.is_mine({
+            "id": 2,
+            "owner": "amiller",
+            "user": {"id": 21501, "username": "amiller"},
+        }) is False
+        assert connected.is_mine({"owner": None}) is False
+
 
 # -- Jobs ---------------------------------------------------------------------
 
