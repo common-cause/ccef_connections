@@ -27,7 +27,8 @@
       "mcp__plugin_common-cause-utilities_pdf-press",
       "mcp__plugin_common-cause-utilities_asana",
       "mcp__plugin_common-cause-data_civis",
-      "mcp__plugin_common-cause-utilities_work-items"
+      "mcp__plugin_common-cause-utilities_work-items",
+      "mcp__plugin_common-cause-utilities_zendesk"
     ],
     "ask": [
       "mcp__plugin_common-cause-data_civis__civis_create_job",
@@ -38,7 +39,7 @@
     "defaultMode": "acceptEdits"
   },
   "meta": {
-    "template_version": 15,
+    "template_version": 16,
     "scaffold_date": "2026-05-14",
     "project_type": "basic"
   }
