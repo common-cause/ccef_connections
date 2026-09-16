@@ -121,18 +121,49 @@ the connector self-throttles (default 120 req/min, well under the ~400/min ceili
 
 ## Action Network connector — creating a message never sends it
 
-`create_message()` (and `update_message()`) only ever produce a **draft** — AN
-shows it as an email in the UI, but nothing goes out. Actually delivering it
-is a separate call: `send_message(id)` / `schedule_message(id, scheduled_start_date)`,
-which hit AN's `send`/`schedule` helper endpoints (verified against AN's live
-API docs, 2026-09-16 — the Messages resource page does not itself do this,
-which is why this was missing for one version). Both require the message to
-already be `draft` status with `total_targeted > 0`; call them only after
-targeting has finished computing (right after create/update it's briefly
-`calculating`), or the call fails. `from_email`/`reply_to` on `create_message`
-are required by AN before either helper will accept the message — the AN
-field name for sender is the reserved word `from`, hence the `_email` suffix
-here instead of a bare kwarg.
+`create_message()` only ever produces a **draft** — AN shows it as an email in
+the UI, but nothing goes out. Delivering it is a separate call:
+`send_message(id)` / `schedule_message(id, scheduled_start_date)`, which hit
+AN's `send`/`schedule` helper endpoints. Those two, plus `update_message()`,
+all arrived together in **0.16.0** (PR #3, Antione Fields) — before that the
+connector could compose mail and had no way to send it. Verified against AN's
+live API docs 2026-09-16; the Messages resource page doesn't document the
+helpers, which is why they were missed for as long as they were.
+
+**An empty `targets` list is the dangerous input, not a harmless one.**
+Omitting `targets` makes AN target the FULL list, so a segment query that
+resolved to nobody must never be passed through as `[]` — that turns "send to
+these zero people" into "send to everyone." `create_message(targets=[])`
+therefore raises `ValueError` rather than guessing; AN's handling of an
+explicit empty array was never verified and this is not the thing to find out
+by experiment. Targets are `{"href": "<query-url>"}`, **not** `{"type", "id"}`
+— a stale test asserted the wrong shape for a while and the suite stayed green,
+because `targets` is forwarded to AN untouched.
+
+**The helpers answer success with an empty 200, not a 204.** `_request`
+special-cased only 204, so a *successful* send raised a vendor
+`JSONDecodeError` straight past the documented
+`AuthenticationError`/`RateLimitError`/`ConnectionError` contract — and a caller
+that retried the resulting error would double-send. Guarded since 0.16.0, with
+the `>= 400` check ordered *above* the empty-body check so an empty 5xx still
+raises. Generalize it: check whether a new endpoint returns a body at all
+before routing it through a shared `_request`.
+
+Both helpers require the message to already be `draft` with `total_targeted >
+0`; call them only after targeting has finished computing (right after
+create/update it's briefly `calculating`), or the call fails. There is no
+`wait_for_targeting()` helper yet, so every calling project hand-rolls its own
+poll loop — that's the right thing to build here rather than in each project.
+`from_email`/`reply_to` are required by AN before either helper will accept the
+message — the AN field name for sender is the reserved word `from`, hence the
+`_email` suffix instead of a bare kwarg. AN rate-limits target/wrapper changes
+to one POST/PUT every 30 seconds, and the retry decorator still ignores the
+`Retry-After` that `_request` already parses (Asana honors it; AN does not).
+
+**The live send path is unverified.** As of the v0.16.0 tag nobody had put a
+real message through `send_message()` against a live AN account — Rob cut the
+tag knowing that. Verify against a sandbox list before pointing a production
+Civis job at it.
 
 ## PII / Data Handling
 
