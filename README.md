@@ -1541,6 +1541,7 @@ GitHub's secondary rate limits (403 with `x-ratelimit-remaining: 0`).
 - `get_file(repo, path, ref="main")` - Fetch a file. Returns `{"content_bytes": bytes, "sha": str}` or `None` if the file doesn't exist on `ref`. Raises `WriteError` if `path` is a directory.
 - `put_file(repo, path, content_bytes, message, branch="main", sha=None)` - Create or update a file. For updates, pass the file's current SHA via `sha`. Returns the new commit SHA. Raises `WriteError` on SHA conflicts (409) or validation failures (422).
 - `put_file_if_changed(repo, path, content_bytes, message, branch="main")` - The headline call site for idempotent sync jobs. Fetches the file, compares bytes, and only PUTs if there's a real change. Returns the new commit SHA, or `None` if the repo already had identical content. Safe to call on every scheduled run; no-op days produce no commits.
+- `replace_branch(repo, branch, files, message)` - Make `branch` a single parentless commit holding exactly `files` (`{path: bytes}`), creating the branch if needed. Discards every earlier commit on the branch and every file not passed. It's for generated Pages branches whose past contents must not stay public (ep-training-map's public coalition map). Uses the git data API (blobs, tree, commit, then a forced ref move), so the PAT needs Contents: Read & Write. Returns the new commit SHA. Raises `WriteError` on an empty file set or a rejected ref move.
 
 ### EmailConnector
 

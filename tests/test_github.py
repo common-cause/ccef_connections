@@ -628,6 +628,84 @@ class TestPutFileIfChanged:
         assert put_call.kwargs["json"]["branch"] == "staging"
 
 
+# -- replace_branch ----------------------------------------------------------
+
+
+def _git_responses(existing_ref=True):
+    """blob x2, tree, commit, GET ref, then PATCH (or POST) ref."""
+    return [
+        _make_response(201, {"sha": "blob-a"}),
+        _make_response(201, {"sha": "blob-b"}),
+        _make_response(201, {"sha": "tree1"}),
+        _make_response(201, {"sha": "commit1"}),
+        (_make_response(200, {"ref": "refs/heads/gh-pages",
+                              "object": {"sha": "old"}})
+         if existing_ref else _make_response(404, text="Not Found")),
+        _make_response(200 if existing_ref else 201,
+                       {"ref": "refs/heads/gh-pages"}),
+    ]
+
+
+class TestReplaceBranch:
+    FILES = {"index.html": b"<html></html>", "data/x.json": b"{}"}
+
+    @patch("ccef_connections.connectors.github.requests.request")
+    def test_builds_orphan_commit_and_force_moves_ref(
+        self, mock_request, connected_connector
+    ):
+        mock_request.side_effect = _git_responses(existing_ref=True)
+
+        sha = connected_connector.replace_branch(
+            SAMPLE_REPO, "gh-pages", self.FILES, "Publish"
+        )
+
+        assert sha == "commit1"
+        calls = mock_request.call_args_list
+        # Blobs are uploaded in sorted path order, base64-encoded.
+        assert base64.b64decode(calls[0].kwargs["json"]["content"]) == b"{}"
+        # The tree has no base_tree, so files not passed are dropped.
+        tree_body = calls[2].kwargs["json"]
+        assert "base_tree" not in tree_body
+        assert [e["path"] for e in tree_body["tree"]] == ["data/x.json", "index.html"]
+        # The commit has no parents, so earlier history is dropped.
+        assert calls[3].kwargs["json"]["parents"] == []
+        patch_call = calls[5]
+        assert patch_call.args[0] == "PATCH"
+        assert patch_call.args[1].endswith("/git/refs/heads/gh-pages")
+        assert patch_call.kwargs["json"] == {"sha": "commit1", "force": True}
+
+    @patch("ccef_connections.connectors.github.requests.request")
+    def test_creates_missing_branch(self, mock_request, connected_connector):
+        mock_request.side_effect = _git_responses(existing_ref=False)
+
+        connected_connector.replace_branch(
+            SAMPLE_REPO, "gh-pages", self.FILES, "First publish"
+        )
+
+        post_ref = mock_request.call_args_list[5]
+        assert post_ref.args[0] == "POST"
+        assert post_ref.args[1].endswith("/git/refs")
+        assert post_ref.kwargs["json"] == {
+            "ref": "refs/heads/gh-pages", "sha": "commit1"}
+
+    def test_refuses_empty_file_set(self, connected_connector):
+        with pytest.raises(WriteError):
+            connected_connector.replace_branch(SAMPLE_REPO, "gh-pages", {}, "x")
+
+    @patch("ccef_connections.connectors.github.requests.request")
+    def test_rejected_ref_move_is_write_error(
+        self, mock_request, connected_connector
+    ):
+        responses = _git_responses(existing_ref=True)
+        responses[5] = _make_response(422, text="Update is not a fast forward")
+        mock_request.side_effect = responses
+
+        with pytest.raises(WriteError):
+            connected_connector.replace_branch(
+                SAMPLE_REPO, "gh-pages", self.FILES, "Publish"
+            )
+
+
 # -- _parse_retry_after ------------------------------------------------------
 
 

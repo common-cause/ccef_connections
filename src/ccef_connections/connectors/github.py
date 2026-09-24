@@ -342,6 +342,105 @@ class GitHubConnector(BaseConnection):
             repo, path, content_bytes, message, branch=branch, sha=sha
         )
 
+    # -- Git data API --------------------------------------------------
+
+    @retry_github_operation
+    def replace_branch(
+        self,
+        repo: str,
+        branch: str,
+        files: Dict[str, bytes],
+        message: str,
+    ) -> str:
+        """
+        Make `branch` a single parentless commit holding exactly `files`.
+
+        This is for a generated site (e.g. a GitHub Pages branch) that should
+        carry no history. Each call builds a fresh tree with no base and a
+        commit with no parents, then force-moves the branch to it, creating
+        the branch if it doesn't exist. Files that aren't in `files` are gone
+        afterwards, and so is every earlier commit on the branch. Use it when
+        something removed from the site must not stay in public history.
+        `put_file` is the per-file, history-keeping alternative.
+
+        A fine-grained PAT with Contents: Read & Write on the one repo is
+        enough. Never point this at a branch whose history matters.
+
+        Args:
+            repo: Repository in 'owner/name' form.
+            branch: Branch to replace, without 'refs/heads/'.
+            files: {path from repo root: contents}. Must not be empty.
+            message: Commit message for the single commit.
+
+        Returns:
+            The new commit SHA.
+
+        Raises:
+            WriteError: If `files` is empty or the API rejects a step
+            AuthenticationError: If the PAT lacks write access
+            ConnectionError: For other API failures
+        """
+        if not files:
+            raise WriteError(f"Refusing to replace {repo}:{branch} with no files")
+
+        tree = []
+        for path in sorted(files):
+            blob = self._request(
+                "POST",
+                f"/repos/{repo}/git/blobs",
+                json_body={
+                    "content": base64.b64encode(files[path]).decode("ascii"),
+                    "encoding": "base64",
+                },
+            )
+            if not blob or "sha" not in blob:
+                raise WriteError(f"Blob upload failed for {repo}:{path}: {blob}")
+            tree.append(
+                {"path": path, "mode": "100644", "type": "blob", "sha": blob["sha"]}
+            )
+
+        new_tree = self._request(
+            "POST", f"/repos/{repo}/git/trees", json_body={"tree": tree}
+        )
+        if not new_tree or "sha" not in new_tree:
+            raise WriteError(f"Tree creation failed for {repo}: {new_tree}")
+
+        commit = self._request(
+            "POST",
+            f"/repos/{repo}/git/commits",
+            json_body={"message": message, "tree": new_tree["sha"], "parents": []},
+        )
+        if not commit or "sha" not in commit:
+            raise WriteError(f"Commit creation failed for {repo}: {commit}")
+        commit_sha: str = commit["sha"]
+
+        existing = self._request("GET", f"/repos/{repo}/git/ref/heads/{branch}")
+        try:
+            if existing is None:
+                self._request(
+                    "POST",
+                    f"/repos/{repo}/git/refs",
+                    json_body={"ref": f"refs/heads/{branch}", "sha": commit_sha},
+                )
+            else:
+                self._request(
+                    "PATCH",
+                    f"/repos/{repo}/git/refs/heads/{branch}",
+                    json_body={"sha": commit_sha, "force": True},
+                )
+        except ConnectionError as e:
+            msg = str(e)
+            if "409" in msg or "422" in msg:
+                raise WriteError(
+                    f"Moving {repo}:{branch} to {commit_sha[:7]} rejected: {e}"
+                ) from e
+            raise
+
+        logger.info(
+            f"Replaced {repo}:{branch} with {len(files)} file(s) ({commit_sha[:7]})"
+        )
+        return commit_sha
+
 
 def _parse_retry_after(headers: Dict[str, str]) -> int:
     """
