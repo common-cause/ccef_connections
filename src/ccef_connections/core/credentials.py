@@ -309,6 +309,25 @@ class CredentialManager:
         """
         return str(self.get_credential("GEOCODIO_API_KEY"))
 
+    def get_google_maps_key(self) -> str:
+        """
+        Get the Google Maps Platform API key (Address Validation).
+
+        A BARE ``AIza...`` string. A JSON-wrapped key is sent verbatim and
+        Google answers "The provided API key is invalid", which reads like a
+        bad key rather than a storage mistake, so that case is refused here.
+
+        Raises:
+            CredentialError: If the credential is missing or JSON-wrapped
+        """
+        key = str(self.get_credential("GOOGLE_MAPS_API_KEY")).strip()
+        if key.startswith("{"):
+            raise CredentialError(
+                "GOOGLE_MAPS_API_KEY_PASSWORD looks like JSON; store the bare "
+                "AIza... key string instead"
+            )
+        return key
+
     def get_user_profile_credentials(self) -> Dict[str, str]:
         """
         Get the Power Automate user-profile flow endpoint and automation key.

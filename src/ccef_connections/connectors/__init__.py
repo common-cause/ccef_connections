@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from .civis import CivisConnector
     from .email_connector import EmailConnector
     from .geocodio import GeocodioConnector
+    from .google_address_validation import GoogleAddressValidationConnector
     from .github import GitHubConnector
     from .helpscout import HelpScoutConnector
     from .hex import HexConnector
@@ -46,6 +47,7 @@ _LAZY_IMPORTS = {
     "CivisConnector": ("civis", None),
     "EmailConnector": ("email_connector", None),
     "GeocodioConnector": ("geocodio", None),
+    "GoogleAddressValidationConnector": ("google_address_validation", None),
     "GitHubConnector": ("github", None),
     "HelpScoutConnector": ("helpscout", None),
     "HexConnector": ("hex", None),

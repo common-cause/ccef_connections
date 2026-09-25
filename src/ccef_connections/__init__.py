@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from .connectors.civis import CivisConnector
     from .connectors.email_connector import EmailConnector
     from .connectors.geocodio import GeocodioConnector
+    from .connectors.google_address_validation import GoogleAddressValidationConnector
     from .connectors.github import GitHubConnector
     from .connectors.helpscout import HelpScoutConnector
     from .connectors.hex import HexConnector
@@ -66,6 +67,7 @@ _LAZY_IMPORTS = {
     "CivisConnector": ("ccef_connections.connectors.civis", None),
     "EmailConnector": ("ccef_connections.connectors.email_connector", None),
     "GeocodioConnector": ("ccef_connections.connectors.geocodio", None),
+    "GoogleAddressValidationConnector": ("ccef_connections.connectors.google_address_validation", None),
     "GitHubConnector": ("ccef_connections.connectors.github", None),
     "HelpScoutConnector": ("ccef_connections.connectors.helpscout", None),
     "HexConnector": ("ccef_connections.connectors.hex", None),
@@ -97,6 +99,7 @@ __all__ = [
     "CivisConnector",
     "EmailConnector",
     "GeocodioConnector",
+    "GoogleAddressValidationConnector",
     "GitHubConnector",
     "HelpScoutConnector",
     "HexConnector",

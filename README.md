@@ -18,6 +18,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 - **Protect the Vote (PTV)**: Election protection shift data — volunteer signups, registered volunteers, and shift availability across all states
 - **ROI CRM**: Fundraising CRM — donors, donations, pledges, memberships, payment tokens, orders, contact info, and code tables
 - **Geocodio**: Address geocoding — forward, reverse, and batch (up to 10,000 per request) for US, Canada, and Mexico
+- **Google Address Validation**: Validate and standardize one postal address per request — corrected address, verdict (ACCEPT / CONFIRM / FIX), and USPS ZIP+4 / DPV for US addresses. Billed per request
 - **GitHub**: File-write access to a repository via the REST contents API — idempotent commits suitable for "data sync -> JSON file -> GitHub Pages" patterns
 - **Hex**: Notebook/dashboard platform API — projects, full cell CRUD, and run triggering; the transport layer under the `hex-toolkit` library
 - **Civis**: The platform our scheduled jobs run *on* — jobs, container scripts, workflows, runs, logs and credential metadata, plus live API-key expiry; the transport layer under the `civis-ops` project
@@ -94,6 +95,7 @@ ASANA_API_KEY_PASSWORD=your-asana-personal-access-token
 PTV_API_KEY_PASSWORD=your-ptv-api-key
 ROI_CRM_CREDENTIALS_PASSWORD={"client_id":"your-client-id","client_secret":"your-client-secret","audience":"https://app.roicrm.net/api/1.0","roi_client_code":"YOUR_ORG"}
 GEOCODIO_API_KEY_PASSWORD=your-geocodio-api-key
+GOOGLE_MAPS_API_KEY_PASSWORD=AIza-your-bare-key-string
 GITHUB_PAT_PASSWORD=ghp_XXXXXXXXXXXXXXXX
 HEX_API_KEY_PASSWORD=your-hex-personal-access-token
 # Civis: this one talks TO the platform rather than being injected BY it, and it
@@ -936,6 +938,7 @@ All credentials follow the `{CREDENTIAL_NAME}_PASSWORD` naming convention:
 - `PTV_API_KEY_PASSWORD` — API key string
 - `ROI_CRM_CREDENTIALS_PASSWORD` — JSON with `client_id`, `client_secret`, `audience`, and `roi_client_code`
 - `GEOCODIO_API_KEY_PASSWORD` — API key string
+- `GOOGLE_MAPS_API_KEY_PASSWORD` — BARE `AIza...` key string, never JSON (a JSON-wrapped key is refused at connect)
 - `GITHUB_PAT_PASSWORD` — Personal Access Token string (default name). Override with `GitHubConnector(credential_name="...")` to use per-repo tokens like `DYNAMIC_ACTION_MAP_GITHUB_PAT_PASSWORD`.
 - `HEX_API_KEY_PASSWORD` — Personal Access Token string (workspace admin must have API access enabled; tokens created under user settings → API keys)
 - `RESEND_API_KEY_PASSWORD` — API key string (plus optional `RESEND_FROM_EMAIL` for a default sender — not a `_PASSWORD` credential, just a plain env var)
@@ -998,6 +1001,7 @@ Per-service detail:
 - **ROI CRM**: 5 retries on 429 rate limit only (500 req per 5-min window); other HTTP errors surface immediately
 - **GitHub**: 5 retries on 429 / 403 secondary rate limits, honoring the exact `Retry-After` (or `x-ratelimit-reset`) duration the API specifies plus a 2s buffer. Other HTTP errors surface immediately.
 - **Geocodio**: 5 retries on 429 rate limit only; other HTTP errors surface immediately
+- **Google Address Validation**: 3 retries on 429 only (a spent daily quota does not recover within the backoff); other HTTP errors surface immediately
 - **Hex**: 3 retries with backoff on read calls (60 req/min limit); writes (create/update/delete cell) run single-shot — a retried POST could duplicate a cell
 - **Email (Resend)**: 5 retries on 429 rate limit only; other HTTP errors surface immediately
 - **Tatango**: 5 retries on 429 rate limit only; other HTTP errors (including WAF 403 body blocks) surface immediately. The connector also paces itself client-side (`min_request_interval`, default 3.0s) since the vendor tier is unpublished — and note business-level refusals arrive inside HTTP **201** bodies, which no retry logic sees
@@ -1523,6 +1527,26 @@ Provides forward and reverse geocoding via the Geocodio API v1.10. Supports sing
 - `reverse_geocode(lat, lng, fields=None, limit=1)` - Reverse geocode a single coordinate pair. Returns dict with `results` key.
 - `batch_geocode(addresses, fields=None, limit=1)` - Batch forward geocode up to 10,000 addresses. `addresses` may be a list of strings or a dict mapping custom keys to addresses. Returns Geocodio batch response dict.
 - `batch_reverse_geocode(coordinates, fields=None, limit=1)` - Batch reverse geocode up to 10,000 coordinate pairs. `coordinates` may be a list of `"lat,lng"` strings or a dict mapping custom keys to `"lat,lng"` strings.
+
+### GoogleAddressValidationConnector
+
+Validates one postal address per request via Google Maps Platform's Address Validation API (`POST https://addressvalidation.googleapis.com/v1:validateAddress`).
+
+**Credential:** `GOOGLE_MAPS_API_KEY_PASSWORD` (bare `AIza...` string). **Auth:** `X-Goog-Api-Key` header, so the key never appears in a URL, log line or exception.
+
+**Every request is billed**, and there is no batch endpoint. Callers should send only addresses they cannot resolve otherwise and keep their own spend cap. `requests_made` counts the calls this instance sent.
+
+- `validate_address(address_lines, *, region_code="US", locality=None, administrative_area=None, postal_code=None, enable_usps_cass=False, previous_response_id=None)` - Returns Google's response dict (`result`, `responseId`).
+- `summarize(response)` (static) - Flattens a response into decision fields: `next_action`, `validation_granularity`, `formatted_address`, `locality`, `administrative_area`, `postal_code`, `usps_first_line`, `usps_city`, `zip5`, `zip4`, `dpv_confirmation`, and the replaced / unconfirmed / missing component lists. Every key is always present.
+
+```python
+from ccef_connections import GoogleAddressValidationConnector as G
+av = G()
+s = G.summarize(av.validate_address(["123 Example St"], locality="Springfield",
+                                    administrative_area="IL"))
+if s["next_action"] == "ACCEPT":
+    print(s["usps_city"], s["zip5"], s["zip4"])
+```
 
 ### GitHubConnector
 

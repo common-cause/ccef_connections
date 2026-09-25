@@ -963,3 +963,21 @@ def retry_render_operation(func: Callable) -> Callable:
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )(func)
+
+
+def retry_google_address_validation_operation(func: Callable) -> Callable:
+    """
+    Decorator for Google Address Validation API calls.
+
+    Google answers 429 (``RESOURCE_EXHAUSTED``) for both a per-minute rate
+    limit and an exhausted daily quota. Only RateLimitError is retried, and
+    only 3 times, because a spent daily quota will not recover within the
+    backoff.
+    """
+    return retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=2.0, min=2.0, max=30.0),
+        retry=retry_if_exception_type(RateLimitError),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )(func)

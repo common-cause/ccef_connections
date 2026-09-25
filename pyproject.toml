@@ -12,7 +12,7 @@ requires-python = ">=3.9"
 readme = "README.md"
 # Base install covers core (credentials, retry, exceptions) and all REST
 # connectors: Action Builder, Action Network, Asana, Civis, Email (Resend),
-# Geocodio, GitHub, HelpScout, Hex, PTV, ROI CRM, Stripe, Tatango, Zendesk,
+# Geocodio, Google Address Validation, GitHub, HelpScout, Hex, PTV, ROI CRM, Stripe, Tatango, Zendesk,
 # Zoom. Heavier connectors live behind extras below.
 dependencies = [
     "requests>=2.31.0",
