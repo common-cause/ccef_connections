@@ -350,6 +350,17 @@ class TestCredentialManager:
             result = cm.get_bigquery_credentials()
         assert result == creds
 
+    def test_get_bigquery_credentials_custom_name(self):
+        """get_bigquery_credentials reads an alternate {NAME}_PASSWORD when named."""
+        creds = {"type": "service_account", "project_id": "cc-project"}
+        with patch.dict(
+            "os.environ",
+            {"BIGQUERY_CC_CREDENTIALS_PASSWORD": json.dumps(creds)},
+        ):
+            cm = _make_manager()
+            result = cm.get_bigquery_credentials("BIGQUERY_CC_CREDENTIALS")
+        assert result == creds
+
     def test_get_bigquery_credentials_rejects_non_dict(self):
         """get_bigquery_credentials raises if the JSON is not a dict."""
         with patch.dict(
