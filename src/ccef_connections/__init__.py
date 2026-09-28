@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from .connectors.sftp import SFTPConnector
     from .connectors.sheets import SheetsConnector
     from .connectors.sheets_writer import SheetsWriterConnector
+    from .connectors.signupgenius import SignUpGeniusConnector
     from .connectors.snowflake import SnowflakeConnector
     from .connectors.chariot import ChariotConnector
     from .connectors.stripe import StripeConnector
@@ -54,7 +55,7 @@ if TYPE_CHECKING:
     from .connectors.zendesk import ZendeskConnector
     from .connectors.zoom import ZoomConnector
 
-__version__ = "0.17.0"
+__version__ = "0.18.0"
 
 # Lazy attribute -> (module, required extra or None).
 # Connectors with extra=None need only the base install (requests).
@@ -78,6 +79,7 @@ _LAZY_IMPORTS = {
     "SFTPConnector": ("ccef_connections.connectors.sftp", "sftp"),
     "SheetsConnector": ("ccef_connections.connectors.sheets", "sheets"),
     "SheetsWriterConnector": ("ccef_connections.connectors.sheets_writer", "sheets"),
+    "SignUpGeniusConnector": ("ccef_connections.connectors.signupgenius", None),
     "SnowflakeConnector": ("ccef_connections.connectors.snowflake", "snowflake"),
     "ChariotConnector": ("ccef_connections.connectors.chariot", None),
     "StripeConnector": ("ccef_connections.connectors.stripe", None),
@@ -110,6 +112,7 @@ __all__ = [
     "SFTPConnector",
     "SheetsConnector",
     "SheetsWriterConnector",
+    "SignUpGeniusConnector",
     "SnowflakeConnector",
     "ChariotConnector",
     "StripeConnector",

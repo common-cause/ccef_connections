@@ -917,6 +917,33 @@ def retry_geocodio_operation(func: Callable) -> Callable:
     )(func)
 
 
+def retry_signupgenius_operation(func: Callable) -> Callable:
+    """
+    Decorator for SignUpGenius API operations with retry logic.
+
+    Only RateLimitError is retried, per the module rule — SignUpGenius answers
+    a bad key with 403 and a refused signup with ``200 success:false``, and
+    neither improves by waiting.
+
+    ⚠ SignUpGenius publishes no rate limit and sends no rate-limit headers
+    (checked 2026-09-28). This decorator exists so that a 429, if one ever
+    appears, is handled like every other service's.
+
+    Args:
+        func: The function to decorate
+
+    Returns:
+        Decorated function with SignUpGenius-specific retry logic
+    """
+    return retry(
+        stop=stop_after_attempt(4),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type(RateLimitError),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )(func)
+
+
 def _wait_for_render_rate_limit(retry_state) -> float:
     """Wait the duration the Render API requested, plus jitter.
 

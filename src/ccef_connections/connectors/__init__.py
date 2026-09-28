@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from .sftp import SFTPConnector
     from .sheets import SheetsConnector
     from .sheets_writer import SheetsWriterConnector
+    from .signupgenius import SignUpGeniusConnector
     from .snowflake import SnowflakeConnector
     from .chariot import ChariotConnector
     from .stripe import StripeConnector
@@ -58,6 +59,7 @@ _LAZY_IMPORTS = {
     "SFTPConnector": ("sftp", "sftp"),
     "SheetsConnector": ("sheets", "sheets"),
     "SheetsWriterConnector": ("sheets_writer", "sheets"),
+    "SignUpGeniusConnector": ("signupgenius", None),
     "SnowflakeConnector": ("snowflake", "snowflake"),
     "ChariotConnector": ("chariot", None),
     "StripeConnector": ("stripe", None),

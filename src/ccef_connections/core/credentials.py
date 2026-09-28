@@ -328,6 +328,19 @@ class CredentialManager:
             )
         return key
 
+    def get_signupgenius_key(self) -> str:
+        """
+        Get the SignUpGenius API key (Pro accounts: Settings → Pro Tools →
+        API Management).
+
+        Returns:
+            The SignUpGenius API key
+
+        Raises:
+            CredentialError: If the credential is missing
+        """
+        return str(self.get_credential("SIGNUPGENIUS_API_KEY"))
+
     def get_user_profile_credentials(self) -> Dict[str, str]:
         """
         Get the Power Automate user-profile flow endpoint and automation key.

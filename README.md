@@ -19,6 +19,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 - **ROI CRM**: Fundraising CRM — donors, donations, pledges, memberships, payment tokens, orders, contact info, and code tables
 - **Geocodio**: Address geocoding — forward, reverse, and batch (up to 10,000 per request) for US, Canada, and Mexico
 - **Google Address Validation**: Validate and standardize one postal address per request — corrected address, verdict (ACCEPT / CONFIRM / FIX), and USPS ZIP+4 / DPV for US addresses. Billed per request
+- **SignUpGenius**: Read-only key-based API (Pro accounts) — account profile, the account's signups, and per-signup filled/available slot reports
 - **GitHub**: File-write access to a repository via the REST contents API — idempotent commits suitable for "data sync -> JSON file -> GitHub Pages" patterns
 - **Hex**: Notebook/dashboard platform API — projects, full cell CRUD, and run triggering; the transport layer under the `hex-toolkit` library
 - **Civis**: The platform our scheduled jobs run *on* — jobs, container scripts, workflows, runs, logs and credential metadata, plus live API-key expiry; the transport layer under the `civis-ops` project
@@ -35,7 +36,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 Dependencies are split by connector. The base install is lightweight
 (`requests`, `tenacity`, `python-dotenv`) and covers core plus all REST
 connectors: Action Builder, Action Network, Asana, Civis, Email (Resend),
-Geocodio, GitHub, HelpScout, Hex, PTV, ROI CRM, Tatango, and Zoom. Heavier connectors are opt-in via extras:
+Geocodio, GitHub, HelpScout, Hex, PTV, ROI CRM, SignUpGenius, Tatango, and Zoom. Heavier connectors are opt-in via extras:
 
 | Extra | Enables | Pulls in |
 |---|---|---|
@@ -96,6 +97,7 @@ PTV_API_KEY_PASSWORD=your-ptv-api-key
 ROI_CRM_CREDENTIALS_PASSWORD={"client_id":"your-client-id","client_secret":"your-client-secret","audience":"https://app.roicrm.net/api/1.0","roi_client_code":"YOUR_ORG"}
 GEOCODIO_API_KEY_PASSWORD=your-geocodio-api-key
 GOOGLE_MAPS_API_KEY_PASSWORD=AIza-your-bare-key-string
+SIGNUPGENIUS_API_KEY_PASSWORD=your-signupgenius-api-key
 GITHUB_PAT_PASSWORD=ghp_XXXXXXXXXXXXXXXX
 HEX_API_KEY_PASSWORD=your-hex-personal-access-token
 # Civis: this one talks TO the platform rather than being injected BY it, and it
@@ -1002,6 +1004,7 @@ Per-service detail:
 - **GitHub**: 5 retries on 429 / 403 secondary rate limits, honoring the exact `Retry-After` (or `x-ratelimit-reset`) duration the API specifies plus a 2s buffer. Other HTTP errors surface immediately.
 - **Geocodio**: 5 retries on 429 rate limit only; other HTTP errors surface immediately
 - **Google Address Validation**: 3 retries on 429 only (a spent daily quota does not recover within the backoff); other HTTP errors surface immediately
+- **SignUpGenius**: 4 retries on 429 only. No limit is published and no rate headers are sent; a bad key (403) or a refused signup (`200 success:false`) surfaces immediately
 - **Hex**: 3 retries with backoff on read calls (60 req/min limit); writes (create/update/delete cell) run single-shot — a retried POST could duplicate a cell
 - **Email (Resend)**: 5 retries on 429 rate limit only; other HTTP errors surface immediately
 - **Tatango**: 5 retries on 429 rate limit only; other HTTP errors (including WAF 403 body blocks) surface immediately. The connector also paces itself client-side (`min_request_interval`, default 3.0s) since the vendor tier is unpublished — and note business-level refusals arrive inside HTTP **201** bodies, which no retry logic sees
@@ -1548,6 +1551,31 @@ if s["next_action"] == "ACCEPT":
     print(s["usps_city"], s["zip5"], s["zip4"])
 ```
 
+### SignUpGeniusConnector
+
+Read-only access to the SignUpGenius key-based API v2. Pro accounts only; the key is under profile → Settings → Pro Tools → API Management.
+
+**Credential:** `SIGNUPGENIUS_API_KEY_PASSWORD` (plain API key string)
+
+**Auth:** `user_key` query parameter. Base URL: `https://api.signupgenius.com/v2/k`.
+
+**Refusals can be HTTP 200.** Every response is a `{success, message, data}` envelope, and a report for a signup the account can't see comes back `200 {"success": false, "message": ["access denied"]}`. The connector raises `AuthenticationError` on that rather than returning an empty report. A bad key is a 403 with a plain-text body.
+
+**`groupid` is per signup, not per folder.** Signups made by copying each get their own `groupid` under the same `group` name, so "every signup in a group" means filtering on the name.
+
+- `get_profile()` - Account profile, including `subscription` (`ispro`, `prolevel`). The cheap check that the key works.
+- `list_signups(status="active")` - The account's signups; `status` is `"active"`, `"expired"` or `"all"`.
+- `get_report(signup_id, report="filled")` - Slot rows for one signup; `report` is `"filled"` (with each person's name, email, phone, status and signup date), `"available"` or `"all"`. `slotitemid` identifies the slot and `itemmemberid` the signup in it. Times are epoch seconds (UTC) plus an `offset` string.
+
+```python
+from ccef_connections import SignUpGeniusConnector
+
+sug = SignUpGeniusConnector()
+for s in sug.list_signups("active"):
+    if s["group"] == "2026 November Early Vote Poll Monitors":
+        rows = sug.get_report(s["signupid"], "filled")
+```
+
 ### GitHubConnector
 
 Provides file-write access to a GitHub repository via the REST contents API. Designed
@@ -1981,4 +2009,4 @@ For issues or questions:
 
 ## Version
 
-Current version: 0.16.0
+Current version: 0.18.0
