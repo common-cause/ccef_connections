@@ -141,6 +141,28 @@ class TestConnect:
             project="test-project-from-creds",
         )
 
+    @patch("ccef_connections.connectors.bigquery.bigquery.Client")
+    @patch("ccef_connections.connectors.bigquery.Credentials.from_service_account_info")
+    def test_connect_uses_default_credential_name(
+        self, mock_from_sa, mock_client_cls, connector
+    ):
+        connector.connect()
+        connector._credential_manager.get_bigquery_credentials.assert_called_once_with(
+            "BIGQUERY_CREDENTIALS"
+        )
+
+    @patch("ccef_connections.connectors.bigquery.bigquery.Client")
+    @patch("ccef_connections.connectors.bigquery.Credentials.from_service_account_info")
+    def test_connect_uses_custom_credential_name(self, mock_from_sa, mock_client_cls):
+        c = BigQueryConnector(credential_name="BIGQUERY_CC_CREDENTIALS")
+        c._credential_manager = MagicMock()
+        c._credential_manager.get_bigquery_credentials.return_value = FAKE_CREDS_DICT.copy()
+        c.connect()
+        c._credential_manager.get_bigquery_credentials.assert_called_once_with(
+            "BIGQUERY_CC_CREDENTIALS"
+        )
+        assert c.is_connected()
+
     @patch("ccef_connections.connectors.bigquery.Credentials.from_service_account_info")
     def test_connect_missing_project_id_raises_credential_error(
         self, mock_from_sa

@@ -146,9 +146,17 @@ class CredentialManager:
             )
         return creds
 
-    def get_bigquery_credentials(self) -> Dict[str, Any]:
+    def get_bigquery_credentials(
+        self, credential_name: str = "BIGQUERY_CREDENTIALS"
+    ) -> Dict[str, Any]:
         """
         Get BigQuery service account credentials.
+
+        Args:
+            credential_name: Credential name without the ``_PASSWORD`` suffix.
+                Defaults to ``BIGQUERY_CREDENTIALS``; pass another (e.g.
+                ``BIGQUERY_CC_CREDENTIALS``) when a project needs a second
+                service account for a different GCP project.
 
         Returns:
             The parsed service account JSON credentials
@@ -156,9 +164,9 @@ class CredentialManager:
         Raises:
             CredentialError: If the credential is missing or invalid JSON
         """
-        creds = self.get_credential("BIGQUERY_CREDENTIALS", is_json=True)
+        creds = self.get_credential(credential_name, is_json=True)
         if not isinstance(creds, dict):
-            raise CredentialError("BIGQUERY_CREDENTIALS_PASSWORD must be a valid JSON object")
+            raise CredentialError(f"{credential_name}_PASSWORD must be a valid JSON object")
         return creds
 
     def get_helpscout_credentials(self) -> Dict[str, Any]:

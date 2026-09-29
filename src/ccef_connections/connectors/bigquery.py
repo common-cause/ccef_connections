@@ -55,15 +55,25 @@ class BigQueryConnector(BaseConnection):
         >>> connector.load_dataframe(df, 'dataset.table', if_exists='append')
     """
 
-    def __init__(self, project_id: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        project_id: Optional[str] = None,
+        credential_name: str = "BIGQUERY_CREDENTIALS",
+    ) -> None:
         """
         Initialize the BigQuery connector.
 
         Args:
             project_id: GCP project ID (optional, can be specified in credentials)
+            credential_name: Service-account credential to use, without the
+                ``_PASSWORD`` suffix. Defaults to ``BIGQUERY_CREDENTIALS``. Pass
+                another name (e.g. ``BIGQUERY_CC_CREDENTIALS``) to connect as a
+                second service account, such as one that can write to a
+                different GCP project.
         """
         super().__init__()
         self._project_id = project_id
+        self._credential_name = credential_name
         self._credentials: Optional[Credentials] = None
 
     def connect(self) -> None:
@@ -75,7 +85,9 @@ class BigQueryConnector(BaseConnection):
             ConnectionError: If connection fails
         """
         try:
-            creds_dict = self._credential_manager.get_bigquery_credentials()
+            creds_dict = self._credential_manager.get_bigquery_credentials(
+                self._credential_name
+            )
 
             # Create credentials from service account info. Request the Drive
             # scope too so Google-Sheets-backed external tables are queryable.
