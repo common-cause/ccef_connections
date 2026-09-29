@@ -349,6 +349,26 @@ class CredentialManager:
         """
         return str(self.get_credential("SIGNUPGENIUS_API_KEY"))
 
+    def get_actblue_credentials(self) -> Dict[str, str]:
+        """
+        Get ActBlue CSV API credentials.
+
+        ``ACTBLUE_API_KEY_PASSWORD`` holds ``{"uuid": "...", "secret": "..."}``
+        (created in ActBlue under Dashboard → Integrations → API credentials).
+
+        Returns:
+            Dict with ``uuid`` and ``secret``
+
+        Raises:
+            CredentialError: If missing, not JSON, or lacking either key
+        """
+        creds = self.get_credential("ACTBLUE_API_KEY", is_json=True)
+        if not isinstance(creds, dict) or not creds.get("uuid") or not creds.get("secret"):
+            raise CredentialError(
+                'ACTBLUE_API_KEY_PASSWORD must be a JSON object {"uuid": ..., "secret": ...}'
+            )
+        return {"uuid": str(creds["uuid"]), "secret": str(creds["secret"])}
+
     def get_user_profile_credentials(self) -> Dict[str, str]:
         """
         Get the Power Automate user-profile flow endpoint and automation key.
