@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from .config import ConfigManager
     from .connectors.action_builder import ActionBuilderConnector
     from .connectors.action_network import ActionNetworkConnector
+    from .connectors.actblue import ActBlueConnector
     from .connectors.airtable import AirtableConnector
     from .connectors.asana import AsanaConnector
     from .connectors.bigquery import BigQueryConnector
@@ -62,6 +63,7 @@ __version__ = "0.19.0"
 _LAZY_IMPORTS = {
     "ActionBuilderConnector": ("ccef_connections.connectors.action_builder", None),
     "ActionNetworkConnector": ("ccef_connections.connectors.action_network", None),
+    "ActBlueConnector": ("ccef_connections.connectors.actblue", None),
     "AirtableConnector": ("ccef_connections.connectors.airtable", "airtable"),
     "AsanaConnector": ("ccef_connections.connectors.asana", None),
     "BigQueryConnector": ("ccef_connections.connectors.bigquery", "bigquery"),
@@ -95,6 +97,7 @@ __all__ = [
     # Main connectors
     "ActionBuilderConnector",
     "ActionNetworkConnector",
+    "ActBlueConnector",
     "AirtableConnector",
     "AsanaConnector",
     "BigQueryConnector",

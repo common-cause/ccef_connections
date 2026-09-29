@@ -944,6 +944,30 @@ def retry_signupgenius_operation(func: Callable) -> Callable:
     )(func)
 
 
+def retry_actblue_operation(func: Callable) -> Callable:
+    """
+    Decorator for ActBlue CSV API operations with retry logic.
+
+    Only RateLimitError is retried, per the module rule. ActBlue publishes no
+    rate limit for the CSV API; this exists so a 429, if one appears, is
+    handled like every other service's. Never wrap a CSV *request* in a retry
+    on other errors — each POST starts a real export job.
+
+    Args:
+        func: The function to decorate
+
+    Returns:
+        Decorated function with ActBlue-specific retry logic
+    """
+    return retry(
+        stop=stop_after_attempt(4),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type(RateLimitError),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )(func)
+
+
 def _wait_for_render_rate_limit(retry_state) -> float:
     """Wait the duration the Render API requested, plus jitter.
 

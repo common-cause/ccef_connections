@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .action_builder import ActionBuilderConnector
     from .action_network import ActionNetworkConnector
+    from .actblue import ActBlueConnector
     from .airtable import AirtableConnector
     from .asana import AsanaConnector
     from .bigquery import BigQueryConnector
@@ -42,6 +43,7 @@ if TYPE_CHECKING:
 _LAZY_IMPORTS = {
     "ActionBuilderConnector": ("action_builder", None),
     "ActionNetworkConnector": ("action_network", None),
+    "ActBlueConnector": ("actblue", None),
     "AirtableConnector": ("airtable", "airtable"),
     "AsanaConnector": ("asana", None),
     "BigQueryConnector": ("bigquery", "bigquery"),
