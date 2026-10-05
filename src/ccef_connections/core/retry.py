@@ -737,6 +737,30 @@ def retry_email_operation(func: Callable) -> Callable:
     )(func)
 
 
+def retry_graph_mail_operation(func: Callable) -> Callable:
+    """
+    Decorator for Microsoft Graph mail sends with retry logic.
+
+    Only retries on RateLimitError. A 429 means Graph did not accept the
+    message, so resending can't duplicate it. Anything else -- including a 5xx,
+    where Graph may or may not have queued the message -- surfaces immediately
+    rather than risk a double send.
+
+    Args:
+        func: The function to decorate
+
+    Returns:
+        Decorated function with Graph-specific retry logic
+    """
+    return retry(
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=2.0, min=1.0, max=60.0),
+        retry=retry_if_exception_type(RateLimitError),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )(func)
+
+
 def retry_tatango_operation(func: Callable) -> Callable:
     """
     Decorator for Tatango (MomoGood) Messaging v2 operations with retry logic.

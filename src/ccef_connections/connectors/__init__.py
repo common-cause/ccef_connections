@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from .geocodio import GeocodioConnector
     from .google_address_validation import GoogleAddressValidationConnector
     from .github import GitHubConnector
+    from .graph_mail import GraphMailConnector
     from .helpscout import HelpScoutConnector
     from .hex import HexConnector
     from .openai import OpenAIConnector
@@ -52,6 +53,7 @@ _LAZY_IMPORTS = {
     "GeocodioConnector": ("geocodio", None),
     "GoogleAddressValidationConnector": ("google_address_validation", None),
     "GitHubConnector": ("github", None),
+    "GraphMailConnector": ("graph_mail", None),
     "HelpScoutConnector": ("helpscout", None),
     "HexConnector": ("hex", None),
     "OpenAIConnector": ("openai", "openai"),

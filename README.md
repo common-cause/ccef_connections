@@ -1605,6 +1605,24 @@ Sends transactional email (magic-links, notifications) via Resend's HTTP API. No
 
 - `send(to, subject, *, html=None, text=None, from_addr=None, reply_to=None)` - Send an email. `to` and `reply_to` accept a single address or a list. `from_addr` falls back to `RESEND_FROM_EMAIL`. Requires at least one of `html`/`text`. Returns Resend's response dict (includes the message `id`). Raises `ValueError` if no sender resolves or no body is given.
 
+### GraphMailConnector
+
+Sends mail **as a Common Cause mailbox** through Microsoft Graph, using the Azure app "Claude Mail Automation" (client-credentials flow, application `Mail.Send`, no signed-in user). Use this rather than `EmailConnector` when a message should come from `dataops@`, `grants@` or `portfolios@`. Added 0.21.0; the send path is the one cc-notifications has used since 2026-08-20.
+
+**Credential:** `SEND_EMAIL_CREDENTIALS_PASSWORD`, JSON `{"tenant_id", "client_id", "client_secret", "default_sender"}` (`default_sender` optional). The sender resolves from the `sender=` argument, then the `SEND_EMAIL_SENDER` env var, then `default_sender`.
+
+**Auth:** A token is fetched on first send and reused until five minutes before it expires. Retries on 429 only; a 5xx surfaces immediately, because Graph may already have queued the message and a retry could double-send.
+
+**⚠ Before you rely on it:**
+
+- **The sender must be on IT's allowlist.** An Exchange `ApplicationAccessPolicy` (2026-10-01) scopes the app to `grants@`, `portfolios@` and `dataops@`. Any other mailbox gets a 403 even though it exists. That's a request to IT, not a bug.
+- **202 means accepted, not delivered.** A 202 with no arrival is an Exchange question (transport rules, junk folder).
+- **Mail.Send is the whole grant.** `GET /users/{address}` returns 403, correctly. There is no read-side health check, so `health_check()` only confirms credentials loaded.
+- **The client secret expires** (6–24 months). An `invalid_client` from the token endpoint usually means it has.
+
+- `send(to, subject, *, html=None, text=None, sender=None, cc=None, bcc=None, reply_to=None, save_to_sent_items=True)` - Send one message. Address arguments take a string or a list. Graph takes one body, so `html` wins over `text`. Returns `202`. Raises `ValueError` for no recipient, body or sender; `AuthenticationError` on 401/403 (the 403 message names the access policy).
+- `resolve_sender(sender=None)` - The mailbox a send would go out as.
+
 ### StripeConnector
 
 Read access to Stripe charges, refunds, disputes, payouts and balance transactions, for reconciliation against the CRM and against bank statements. Direct HTTP via `requests` — no `stripe` SDK, so it needs only the base install. Base URL: `https://api.stripe.com/v1`.
@@ -2009,4 +2027,4 @@ For issues or questions:
 
 ## Version
 
-Current version: 0.18.0
+Current version: 0.21.0
