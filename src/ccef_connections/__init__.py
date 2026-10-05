@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from .connectors.geocodio import GeocodioConnector
     from .connectors.google_address_validation import GoogleAddressValidationConnector
     from .connectors.github import GitHubConnector
+    from .connectors.graph_mail import GraphMailConnector
     from .connectors.helpscout import HelpScoutConnector
     from .connectors.hex import HexConnector
     from .connectors.openai import OpenAIConnector
@@ -56,7 +57,7 @@ if TYPE_CHECKING:
     from .connectors.zendesk import ZendeskConnector
     from .connectors.zoom import ZoomConnector
 
-__version__ = "0.20.0"
+__version__ = "0.21.0"
 
 # Lazy attribute -> (module, required extra or None).
 # Connectors with extra=None need only the base install (requests).
@@ -72,6 +73,7 @@ _LAZY_IMPORTS = {
     "GeocodioConnector": ("ccef_connections.connectors.geocodio", None),
     "GoogleAddressValidationConnector": ("ccef_connections.connectors.google_address_validation", None),
     "GitHubConnector": ("ccef_connections.connectors.github", None),
+    "GraphMailConnector": ("ccef_connections.connectors.graph_mail", None),
     "HelpScoutConnector": ("ccef_connections.connectors.helpscout", None),
     "HexConnector": ("ccef_connections.connectors.hex", None),
     "OpenAIConnector": ("ccef_connections.connectors.openai", "openai"),
@@ -106,6 +108,7 @@ __all__ = [
     "GeocodioConnector",
     "GoogleAddressValidationConnector",
     "GitHubConnector",
+    "GraphMailConnector",
     "HelpScoutConnector",
     "HexConnector",
     "OpenAIConnector",

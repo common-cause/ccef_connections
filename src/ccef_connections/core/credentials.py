@@ -413,6 +413,33 @@ class CredentialManager:
         """
         return str(self.get_credential("RESEND_API_KEY"))
 
+    def get_graph_mail_credentials(self) -> Dict[str, str]:
+        """
+        Get the Microsoft Graph mail app ("Claude Mail Automation") credentials.
+
+        ``SEND_EMAIL_CREDENTIALS_PASSWORD`` holds ``{"tenant_id": ...,
+        "client_id": ..., "client_secret": ..., "default_sender": ...}``.
+        ``default_sender`` is optional.
+
+        Returns:
+            Dict with ``tenant_id``, ``client_id``, ``client_secret`` and, when
+            present, ``default_sender``
+
+        Raises:
+            CredentialError: If missing, not JSON, or lacking a required key
+        """
+        creds = self.get_credential("SEND_EMAIL_CREDENTIALS", is_json=True)
+        required = ("tenant_id", "client_id", "client_secret")
+        if not isinstance(creds, dict) or not all(creds.get(k) for k in required):
+            raise CredentialError(
+                "SEND_EMAIL_CREDENTIALS_PASSWORD must be a JSON object with "
+                "tenant_id, client_id and client_secret (default_sender optional)"
+            )
+        out = {k: str(creds[k]).strip() for k in required}
+        if creds.get("default_sender"):
+            out["default_sender"] = str(creds["default_sender"]).strip()
+        return out
+
     def get_github_pat(self, credential_name: str = "GITHUB_PAT") -> str:
         """
         Get a GitHub Personal Access Token.
