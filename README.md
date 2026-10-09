@@ -10,7 +10,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 - **BigQuery**: Full read/write data warehouse operations
 - **Snowflake**: Read access to the `CMNC_DATA` replica — ROI CRM data, the Unite data model, and the Fivetran mirrors; `(columns, rows)`, dicts or DataFrames
 - **HelpScout**: Automated email processing — read conversations, reply, add notes, close
-- **Zendesk**: Read access to ticketing and configuration objects, ticket create/update, and a deliberately narrow set of single-object config writes for reviewed config-as-code
+- **Zendesk**: Read access to ticketing and configuration objects, ticket create/update, attachment download, and a deliberately narrow set of single-object config writes for reviewed config-as-code
 - **Zoom**: Meeting and webinar attendee retrieval — participants, registrants, absentees
 - **Action Network**: Full CRM access — people, tags, events, petitions, forms, fundraising, messages, and more
 - **Action Builder**: Field organizing and relationship mapping — campaigns, people/entities, tags, taggings, and connections
@@ -1184,7 +1184,7 @@ Schedules fire in the **owning account's timezone**, exposed as `timeZone` on th
 
 ### ZendeskConnector
 
-Read access to a Zendesk Suite instance's ticketing and configuration objects, ticket create/update, and a deliberately narrow set of single-object config writes.
+Read access to a Zendesk Suite instance's ticketing and configuration objects, ticket create/update, attachment download, and a deliberately narrow set of single-object config writes.
 
 **Credential:** `ZENDESK_CREDENTIALS_PASSWORD` — JSON with `client_id` and `client_secret`. `client_id` is the OAuth client's *Identifier* field (an author-chosen slug), **not** its numeric id. The instance comes from `ZENDESK_SUBDOMAIN` (or the `subdomain=` constructor arg).
 
@@ -2027,4 +2027,4 @@ For issues or questions:
 
 ## Version
 
-Current version: 0.21.0
+Current version: 0.22.0

@@ -926,3 +926,44 @@ class TestRegistration:
 
         assert connectors.ZendeskConnector is ZendeskConnector
         assert "ZendeskConnector" in connectors.__all__
+
+
+# ── Attachments ───────────────────────────────────────────────────────
+
+
+class TestDownloadAttachment:
+    URL = f"https://{SUBDOMAIN}.zendesk.com/attachments/token/abc/?name=a.png"
+
+    @staticmethod
+    def _stream(status_code=200, chunks=(b"ab", b"cd")):
+        resp = _make_response(status_code, text="nope")
+        resp.iter_content.return_value = list(chunks)
+        return resp
+
+    @patch("ccef_connections.connectors.zendesk.requests.get")
+    def test_returns_bytes_with_bearer(self, mock_get, connected_connector):
+        mock_get.return_value = self._stream()
+        assert connected_connector.download_attachment(self.URL) == b"abcd"
+        assert mock_get.call_args[1]["headers"]["Authorization"] == "Bearer fake-token-abc"
+
+    @patch("ccef_connections.connectors.zendesk.requests.get")
+    def test_foreign_host_never_gets_the_token(self, mock_get, connected_connector):
+        with pytest.raises(ConfigurationError):
+            connected_connector.download_attachment("https://evil.example/a.png")
+        with pytest.raises(ConfigurationError):
+            connected_connector.download_attachment(
+                f"https://{SUBDOMAIN}.zendesk.com.evil.example/a.png"
+            )
+        mock_get.assert_not_called()
+
+    @patch("ccef_connections.connectors.zendesk.requests.get")
+    def test_oversize_is_refused(self, mock_get, connected_connector):
+        mock_get.return_value = self._stream(chunks=(b"x" * 10, b"x" * 10))
+        with pytest.raises(ConnectionError, match="exceeds"):
+            connected_connector.download_attachment(self.URL, max_bytes=15)
+
+    @patch("ccef_connections.connectors.zendesk.requests.get")
+    def test_http_error_raises(self, mock_get, connected_connector):
+        mock_get.return_value = self._stream(status_code=404)
+        with pytest.raises(ConnectionError, match="404"):
+            connected_connector.download_attachment(self.URL)

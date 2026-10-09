@@ -41,6 +41,7 @@ import logging
 import os
 import time
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import requests
 
@@ -808,6 +809,72 @@ class ZendeskConnector(BaseConnection):
         return self._paginate(
             f"/tickets/{ticket_id}/comments.json", resource_key="comments"
         )
+
+    def download_attachment(
+        self, content_url: str, max_bytes: int = 25 * 1024 * 1024
+    ) -> bytes:
+        """
+        Download one attachment's bytes from its ``content_url``.
+
+        Attachment records ride on comments (``comment["attachments"]``); their
+        ``content_url`` needs the same bearer token as the API when the instance
+        requires authenticated attachment access. Zendesk answers with a redirect
+        to a signed URL on its content host -- ``requests`` drops the
+        Authorization header on that cross-host hop, which is what we want.
+
+        The token is only ever sent to this instance's own host: a
+        ``content_url`` pointing anywhere else is refused rather than handed
+        a bearer token.
+
+        Attachment contents are ticket content and may contain PII -- treat the
+        bytes as row-level data, don't persist them inside a repo.
+
+        Args:
+            content_url: The attachment's ``content_url``
+            max_bytes: Refuse anything larger (default 25 MB)
+
+        Returns:
+            The file's bytes
+
+        Raises:
+            ConfigurationError: If the URL is not on this instance's host
+            ConnectionError: On HTTP failure or an oversize file
+        """
+        host = urlparse(content_url).hostname or ""
+        if host != f"{self.subdomain}.zendesk.com":
+            raise ConfigurationError(
+                f"attachment URL host {host!r} is not {self.subdomain}.zendesk.com; "
+                "refusing to send the bearer token there"
+            )
+        if not self._is_connected and not self._access_token:
+            self.connect()
+        self._throttle()
+        try:
+            resp = requests.get(
+                content_url,
+                headers={"Authorization": self._get_headers()["Authorization"]},
+                timeout=60,
+                stream=True,
+            )
+        except requests.RequestException as e:
+            raise ConnectionError(f"Zendesk attachment download failed: {e}") from e
+        finally:
+            self._last_request_at = time.time()
+        if resp.status_code >= 400:
+            raise ConnectionError(
+                f"Zendesk attachment download error {resp.status_code}: {resp.text[:300]}"
+            )
+        chunks: List[bytes] = []
+        total = 0
+        for chunk in resp.iter_content(chunk_size=64 * 1024):
+            total += len(chunk)
+            if total > max_bytes:
+                resp.close()
+                raise ConnectionError(
+                    f"attachment exceeds {max_bytes} bytes; refusing to download it"
+                )
+            chunks.append(chunk)
+        return b"".join(chunks)
 
     @retry_zendesk_operation
     def list_ticket_metric_events(
