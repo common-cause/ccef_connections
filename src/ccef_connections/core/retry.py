@@ -992,6 +992,53 @@ def retry_actblue_operation(func: Callable) -> Callable:
     )(func)
 
 
+def _wait_for_callhub_rate_limit(retry_state) -> float:
+    """
+    Wait as long as CallHub asked, plus a 1s buffer, capped at 60s.
+
+    The cap matters for the same reason as Civis: CallHub's bulk-import and
+    export-creation endpoints are budgeted at 5 per *hour*, so a throttle there
+    can legitimately mean "come back in fifty minutes". Sleeping that long inside
+    a decorator looks like a hang; a bounded number of bounded waits lets an
+    exhausted hourly budget surface as an error the caller can act on.
+    """
+    exc = retry_state.outcome.exception()
+    if isinstance(exc, RateLimitError) and exc.retry_after:
+        return min(float(exc.retry_after) + 1.0, 60.0)
+    return 2.0
+
+
+def retry_callhub_operation(func: Callable) -> Callable:
+    """
+    Decorator for CallHub API operations with retry logic.
+
+    CallHub publishes per-method limits (20 req/s overall; retrieves 2/s and
+    10,800/day; creates 1/s and 7,200/day; bulk_create and export creation
+    5/hour and 100/day; ``upsert_contact`` 3,600/day). The connector paces
+    itself under the per-second limits client-side; this decorator handles the
+    429 that remains, honoring ``Retry-After`` (bounded — see
+    :func:`_wait_for_callhub_rate_limit`).
+
+    Only RateLimitError is retried. A 429 means the request was rejected, so
+    replaying it is safe even for a campaign create or a status change; a 4xx
+    or 5xx is not replayed, because several decorated methods start campaigns
+    that call or text real people.
+
+    Args:
+        func: The function to decorate
+
+    Returns:
+        Decorated function with CallHub-specific retry logic
+    """
+    return retry(
+        stop=stop_after_attempt(4),
+        wait=_wait_for_callhub_rate_limit,
+        retry=retry_if_exception_type(RateLimitError),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )(func)
+
+
 def _wait_for_render_rate_limit(retry_state) -> float:
     """Wait the duration the Render API requested, plus jitter.
 

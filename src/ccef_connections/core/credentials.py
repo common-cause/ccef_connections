@@ -369,6 +369,44 @@ class CredentialManager:
             )
         return {"uuid": str(creds["uuid"]), "secret": str(creds["secret"])}
 
+    def get_callhub_credentials(self) -> Dict[str, Optional[str]]:
+        """
+        Get the CallHub manager API key and (optionally) the account's API domain.
+
+        ``CALLHUB_API_KEY_PASSWORD`` is either the bare key (Settings → Account
+        → API Key) or JSON carrying the key alongside the account's region-
+        specific API domain, shown on the same settings page::
+
+            {"api_key": "abc123...", "api_domain": "https://api-na1.callhub.io"}
+
+        Returns:
+            Dict with ``api_key`` and ``api_domain`` (None when not given)
+
+        Raises:
+            CredentialError: If the credential is missing, or is JSON without
+                an ``api_key`` field
+        """
+        text = str(self.get_credential("CALLHUB_API_KEY")).strip()
+        if not text.startswith("{"):
+            return {"api_key": text, "api_domain": None}
+        try:
+            obj = json.loads(text)
+        except json.JSONDecodeError as e:
+            raise CredentialError(
+                f"Failed to parse CALLHUB_API_KEY_PASSWORD as JSON: {e}\n"
+                'Expected {"api_key":"...","api_domain":"https://api-na1.callhub.io"} '
+                "or a bare key."
+            ) from e
+        if not isinstance(obj, dict) or not obj.get("api_key"):
+            raise CredentialError(
+                'CALLHUB_API_KEY_PASSWORD is JSON but has no "api_key" field'
+            )
+        domain = obj.get("api_domain")
+        return {
+            "api_key": str(obj["api_key"]).strip(),
+            "api_domain": str(domain).strip() if domain else None,
+        }
+
     def get_user_profile_credentials(self) -> Dict[str, str]:
         """
         Get the Power Automate user-profile flow endpoint and automation key.
