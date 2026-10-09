@@ -894,6 +894,33 @@ class TestBuildSchedule:
         s = build_schedule(hours=22, minute=0)
         assert describe_schedule(s) == "daily 22:00"
 
+    def test_runs_per_hour_without_hours_fills_all_24(self):
+        """Civis 400s an enabled schedule with empty scheduledHours.
+
+        The interval form used to send [] here, so every runs_per_hour
+        schedule was rejected (found 2026-10-09 scheduling job 372328831).
+        """
+        for hours in (None, []):
+            s = build_schedule(hours=hours, runs_per_hour=1)
+            assert s["scheduledHours"] == list(range(24))
+            assert s["scheduledRunsPerHour"] == 1
+
+    def test_runs_per_hour_sends_no_minutes(self):
+        """Civis expands runs_per_hour INTO scheduledMinutes; sent minutes win.
+
+        Verified live 2026-10-09: rph=4 + minutes [0] was stored as hourly at
+        :00 with the interval discarded; rph=4 + minutes [] stored [0,15,30,45].
+        """
+        s = build_schedule(hours=None, minute=15, runs_per_hour=4)
+        assert s["scheduledMinutes"] == []
+
+    def test_runs_per_hour_keeps_explicit_hours(self):
+        s = build_schedule(hours=[8, 9, 10], runs_per_hour=4)
+        assert s["scheduledHours"] == [8, 9, 10]
+
+    def test_fixed_time_form_has_no_interval(self):
+        assert build_schedule(hours=6)["scheduledRunsPerHour"] is None
+
     def test_unscheduled_constant_shape(self):
         assert UNSCHEDULED == {"scheduled": False}
 

@@ -2027,4 +2027,4 @@ For issues or questions:
 
 ## Version
 
-Current version: 0.22.0
+Current version: 0.22.1

@@ -1454,7 +1454,14 @@ def build_schedule(
         days_of_month: Day-of-month or list, for a monthly schedule. Mutually
             exclusive with a weekday schedule in practice.
         runs_per_hour: Interval form — fire N times an hour instead of at set
-            times.
+            times. ``hours`` then says WHICH hours the interval runs in; left
+            empty it means all 24. Civis rejects an enabled schedule whose
+            ``scheduledHours`` is empty (400 "Scheduled Hours can't be empty"),
+            so the interval form cannot be sent without them. ``minute`` is
+            ignored here: Civis never stores ``scheduledRunsPerHour`` — it
+            expands it into ``scheduledMinutes`` (4 → [0, 15, 30, 45]) — and if
+            minutes are sent too, they win and the interval is silently dropped
+            (verified live 2026-10-09: rph=4 with minutes [0] stored as hourly).
 
     Returns:
         A schedule dict ready to send.
@@ -1473,11 +1480,14 @@ def build_schedule(
         return [int(value)]
 
     day_list = as_list(days) if days is not None else list(range(7))
+    hour_list = as_list(hours)
+    if runs_per_hour and not hour_list:
+        hour_list = list(range(24))
     return {
         "scheduled": True,
         "scheduledDays": day_list,
-        "scheduledHours": as_list(hours),
-        "scheduledMinutes": [int(minute)],
+        "scheduledHours": hour_list,
+        "scheduledMinutes": [] if runs_per_hour else [int(minute)],
         "scheduledRunsPerHour": runs_per_hour,
         "scheduledDaysOfMonth": as_list(days_of_month),
     }
