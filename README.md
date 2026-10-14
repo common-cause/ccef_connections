@@ -1042,6 +1042,7 @@ with AirtableConnector() as conn:
 - `list_bases()` - All bases visible to the PAT (`[{id, name, permission_level}]`); needs `schema.bases:read`
 - `update_record(base_id, table_name, record_id, fields)` - Update a record
 - `batch_update(base_id, table_name, records)` - Update multiple records
+- `batch_delete(base_id, table_name, record_ids)` - Delete records by ID (irreversible via API; caller decides what is safe to delete)
 - `create_record(base_id, table_name, fields)` - Create a new record
 - `batch_upsert(base_id, table_name, records, key_fields, replace=False)` - Upsert records matched on `key_fields` (patch existing, create missing; never deletes)
 
@@ -2027,4 +2028,4 @@ For issues or questions:
 
 ## Version
 
-Current version: 0.22.1
+Current version: 0.23.0

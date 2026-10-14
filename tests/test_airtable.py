@@ -359,6 +359,34 @@ class TestUpdateRecord:
         )
 
 
+# -- batch_delete ------------------------------------------------------------
+
+
+class TestBatchDelete:
+    def test_batch_delete_success(self, connected_connector):
+        mock_table = MagicMock()
+        mock_table.batch_delete.return_value = [
+            {"id": "rec1", "deleted": True},
+            {"id": "rec2", "deleted": True},
+        ]
+        connected_connector._api.table.return_value = mock_table
+
+        result = connected_connector.batch_delete(
+            "appABC123", "Tasks", ["rec1", "rec2"],
+        )
+
+        assert [r["id"] for r in result] == ["rec1", "rec2"]
+        mock_table.batch_delete.assert_called_once_with(["rec1", "rec2"])
+        connected_connector._api.table.assert_called_with("appABC123", "Tasks")
+
+    def test_batch_delete_empty_list_makes_no_call(self, connected_connector):
+        mock_table = MagicMock()
+        connected_connector._api.table.return_value = mock_table
+
+        assert connected_connector.batch_delete("appABC123", "Tasks", []) == []
+        mock_table.batch_delete.assert_not_called()
+
+
 # -- batch_update ------------------------------------------------------------
 
 

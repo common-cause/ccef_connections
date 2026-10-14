@@ -255,6 +255,36 @@ class AirtableConnector(BaseConnection):
         return table.batch_update(records)
 
     @retry_airtable_operation
+    def batch_delete(
+        self, base_id: str, table_name: str, record_ids: List[str]
+    ) -> List[Dict[str, Any]]:
+        """
+        Delete multiple records by ID in batch with retry logic.
+
+        Irreversible from the API (Airtable keeps deleted records in the base's
+        trash for a limited time, restorable only in the UI). Callers own the
+        decision of what is safe to delete -- e.g. re-reading inbound links
+        before deleting a duplicate, so nothing linked is orphaned.
+
+        Args:
+            base_id: The Airtable base ID
+            table_name: The table name
+            record_ids: Record IDs to delete (``rec...``). Chunked into
+                Airtable's 10-per-request limit by pyairtable.
+
+        Returns:
+            List of ``{"id": ..., "deleted": True}`` dicts
+
+        Examples:
+            >>> connector = AirtableConnector()
+            >>> connector.batch_delete('appXXX', 'TableName', ['recXXX', 'recYYY'])
+        """
+        if not record_ids:
+            return []
+        table = self.get_table(base_id, table_name)
+        return table.batch_delete(record_ids)
+
+    @retry_airtable_operation
     def create_record(
         self, base_id: str, table_name: str, fields: Dict[str, Any]
     ) -> Dict[str, Any]:
