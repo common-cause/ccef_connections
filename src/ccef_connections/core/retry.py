@@ -43,6 +43,10 @@ logger = logging.getLogger(__name__)
 #     ActionNetworkConnector.create_person — so replaying a 5xx risks a
 #     duplicate write. Surface it and let the caller decide.
 #
+#     A SECOND, NARROWER EXEMPTION (0.24.0) lives in the Action Network
+#     connector, not here: 502/503/504 on GET/PUT/DELETE is retried per
+#     request in ActionNetworkConnector._request (see the note there).
+#
 #     ONE BOUNDED EXEMPTION (added 0.13.0): transient 5xx from **gspread**
 #     specifically is retried. See _GSPREAD_TRANSIENT_STATUSES for the full
 #     argument. In short: gspread is the only vendor library here with no
@@ -392,6 +396,12 @@ def retry_action_network_operation(func: Callable) -> Callable:
     the decorated methods write (``create_person``, ``update_person``,
     ``unsubscribe_person``), and replaying an unknown-state write against a
     people database risks duplicate records.
+
+    Transient gateway errors (502/503/504) are handled one layer down instead,
+    in ``ActionNetworkConnector._request``, and only for GET/PUT/DELETE — see
+    ``_TRANSIENT_GATEWAY_STATUSES`` there. Retrying per request rather than per
+    method is what keeps a multi-step method from replaying a POST that
+    already succeeded.
 
     Args:
         func: The function to decorate

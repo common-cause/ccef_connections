@@ -228,6 +228,63 @@ class TestRequest:
         with pytest.raises(ConnectionError, match="500"):
             connected._request("GET", "/people")
 
+    @patch("ccef_connections.connectors.action_network.time.sleep")
+    @patch("ccef_connections.connectors.action_network.requests.request")
+    def test_502_on_put_is_retried(self, mock_req, mock_sleep, connected):
+        mock_req.side_effect = [
+            _make_response(502, text="Bad gateway"),
+            _make_response(200, {"id": "p1"}),
+        ]
+        result = connected._request("PUT", "/people/p1", json_body={"x": 1})
+        assert result == {"id": "p1"}
+        assert mock_req.call_count == 2
+        mock_sleep.assert_called_once_with(2.0)
+
+    @pytest.mark.parametrize("status", [502, 503, 504])
+    @pytest.mark.parametrize("method", ["GET", "PUT", "DELETE"])
+    @patch("ccef_connections.connectors.action_network.time.sleep")
+    @patch("ccef_connections.connectors.action_network.requests.request")
+    def test_gateway_errors_retried_on_replay_safe_methods(
+        self, mock_req, mock_sleep, connected, method, status
+    ):
+        mock_req.side_effect = [
+            _make_response(status, text="gateway"),
+            _make_response(200, {"ok": True}),
+        ]
+        assert connected._request(method, "/people/p1") == {"ok": True}
+        assert mock_req.call_count == 2
+
+    @patch("ccef_connections.connectors.action_network.time.sleep")
+    @patch("ccef_connections.connectors.action_network.requests.request")
+    def test_persistent_502_raises_after_three_attempts(
+        self, mock_req, mock_sleep, connected
+    ):
+        mock_req.return_value = _make_response(502, text="Bad gateway")
+        with pytest.raises(ConnectionError, match="502"):
+            connected._request("PUT", "/people/p1", json_body={"x": 1})
+        assert mock_req.call_count == 3
+        assert [c.args[0] for c in mock_sleep.call_args_list] == [2.0, 5.0]
+
+    @patch("ccef_connections.connectors.action_network.time.sleep")
+    @patch("ccef_connections.connectors.action_network.requests.request")
+    def test_502_on_post_is_not_retried(self, mock_req, mock_sleep, connected):
+        # A POST (create_person, add_tagging, send...) may have been applied
+        # before the gateway gave up; replaying it could duplicate the effect.
+        mock_req.return_value = _make_response(502, text="Bad gateway")
+        with pytest.raises(ConnectionError, match="502"):
+            connected._request("POST", "/people", json_body={"x": 1})
+        assert mock_req.call_count == 1
+        mock_sleep.assert_not_called()
+
+    @patch("ccef_connections.connectors.action_network.time.sleep")
+    @patch("ccef_connections.connectors.action_network.requests.request")
+    def test_500_on_put_is_not_retried(self, mock_req, mock_sleep, connected):
+        mock_req.return_value = _make_response(500, text="Internal Server Error")
+        with pytest.raises(ConnectionError, match="500"):
+            connected._request("PUT", "/people/p1", json_body={"x": 1})
+        assert mock_req.call_count == 1
+        mock_sleep.assert_not_called()
+
     @patch("ccef_connections.connectors.action_network.requests.request")
     def test_204_returns_none(self, mock_req, connected):
         mock_req.return_value = _make_response(204)
