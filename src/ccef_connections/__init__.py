@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from .connectors.airtable import AirtableConnector
     from .connectors.asana import AsanaConnector
     from .connectors.bigquery import BigQueryConnector
+    from .connectors.callhub import CallHubConnector
     from .connectors.civis import CivisConnector
     from .connectors.email_connector import EmailConnector
     from .connectors.geocodio import GeocodioConnector
@@ -57,7 +58,7 @@ if TYPE_CHECKING:
     from .connectors.zendesk import ZendeskConnector
     from .connectors.zoom import ZoomConnector
 
-__version__ = "0.25.0"
+__version__ = "0.26.0"
 
 # Lazy attribute -> (module, required extra or None).
 # Connectors with extra=None need only the base install (requests).
@@ -68,6 +69,7 @@ _LAZY_IMPORTS = {
     "AirtableConnector": ("ccef_connections.connectors.airtable", "airtable"),
     "AsanaConnector": ("ccef_connections.connectors.asana", None),
     "BigQueryConnector": ("ccef_connections.connectors.bigquery", "bigquery"),
+    "CallHubConnector": ("ccef_connections.connectors.callhub", None),
     "CivisConnector": ("ccef_connections.connectors.civis", None),
     "EmailConnector": ("ccef_connections.connectors.email_connector", None),
     "GeocodioConnector": ("ccef_connections.connectors.geocodio", None),
@@ -103,6 +105,7 @@ __all__ = [
     "AirtableConnector",
     "AsanaConnector",
     "BigQueryConnector",
+    "CallHubConnector",
     "CivisConnector",
     "EmailConnector",
     "GeocodioConnector",

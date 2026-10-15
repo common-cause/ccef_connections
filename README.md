@@ -1,6 +1,6 @@
 # CCEF Connections
 
-A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zendesk, Zoom, Action Network, Action Builder, Asana, Protect the Vote (PTV), ROI CRM, Geocodio, GitHub, Hex, Civis Platform, Render, Resend (transactional email), Tatango (SMS), and Stripe with Civis credential compatibility.
+A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zendesk, Zoom, Action Network, Action Builder, Asana, CallHub, Protect the Vote (PTV), ROI CRM, Geocodio, GitHub, Hex, Civis Platform, Render, Resend (transactional email), Tatango (SMS), and Stripe with Civis credential compatibility.
 
 ## Features
 
@@ -26,6 +26,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 - **Render**: The platform our internal Flask tools run *on* — services and their lifecycle (restart, suspend/resume, scale, plan change, rollback), deploys, app/request/build logs, the event timeline, metrics against the plan's own ceiling, custom domains and DNS verification, and environment variables. Pass `blueprint_path` and it refuses to write env vars that `render.yaml` owns, which Render would silently revert on the next Blueprint sync. `list_events` is the only place an **OOM kill** is recorded — the instance restarts, the health check passes and the dashboard goes back to green, so nothing else in the API says it happened
 - **Email (Resend)**: Transactional email — magic-links, notifications — via Resend's HTTP API
 - **Stripe**: Read access for reconciliation — charges, refunds, disputes, payouts and balance transactions, across **multiple Stripe accounts** from one connector
+- **CallHub**: P2P texting / call center platform — contact lists ("phonebooks"), paced CSV bulk import into a phonebook with an import-completion wait, the contact-field mapping catalogue, custom fields, DNC entries, tags, and read-only campaign/agent/team listings. No campaign start/stop by design
 - **Tatango**: SMS broadcast platform (Messaging API v2) — subscribers with opt-in bypass flags, per-list custom fields, and webhook registrations
 - **Unified Credentials**: `{CREDENTIAL_NAME}_PASSWORD` pattern for Civis compatibility
 - **Automatic Retry**: Built-in exponential backoff for all APIs
@@ -35,7 +36,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 
 Dependencies are split by connector. The base install is lightweight
 (`requests`, `tenacity`, `python-dotenv`) and covers core plus all REST
-connectors: Action Builder, Action Network, Asana, Civis, Email (Resend),
+connectors: Action Builder, Action Network, Asana, CallHub, Civis, Email (Resend),
 Geocodio, GitHub, HelpScout, Hex, PTV, ROI CRM, SignUpGenius, Tatango, and Zoom. Heavier connectors are opt-in via extras:
 
 | Extra | Enables | Pulls in |
@@ -120,6 +121,8 @@ SNOWFLAKE_WAREHOUSE=READER_WH
 SNOWFLAKE_DATABASE=CMNC_DATA
 SNOWFLAKE_SCHEMA=ROI
 SNOWFLAKE_CREDENTIALS_PASSWORD=your-snowflake-password
+# CallHub: bare key, or JSON with the account's regional host (Settings → API Key)
+CALLHUB_API_KEY_PASSWORD={"api_key":"xxxx","api_domain":"https://api-na1.callhub.io"}
 TATANGO_LOGIN_EMAIL_PASSWORD=api-user@yourorg.org
 TATANGO_API_KEY_PASSWORD=your-tatango-api-key
 RESEND_FROM_EMAIL=Your Name <auth@mail.commoncause.org>  # optional default sender
@@ -813,6 +816,35 @@ with EmailConnector() as email:
 **Sender setup:** The from-address domain must be verified in Resend (or use Resend's
 shared sending domain). Provide at least one of `html=` or `text=`. On a persistent
 rate limit (429), `send()` retries with exponential backoff before raising `RateLimitError`.
+
+### CallHub Example
+
+```python
+from ccef_connections import CallHubConnector
+from ccef_connections.connectors.callhub import callhub_id
+
+# Reads CALLHUB_API_KEY_PASSWORD (bare key or {"api_key", "api_domain"}).
+# api.callhub.io is deprecated — the account's regional host must be used.
+with CallHubConnector() as ch:
+    pb = ch.create_phonebook("Wave 1 - GA")
+    pb_id = callhub_id(pb)                     # ids are 64-bit; kept as str
+    fields = ch.field_id_map()                 # name -> import-mapping id
+    ch.bulk_create_contacts(
+        pb_id,
+        header=["phone", "first_name", "list_rank"],
+        rows=[["4045550123", "Jane", "1"]],    # built in memory, never on disk
+        # phone -> both Calling (0) and Texting (1) or it can't be texted
+        mapping={"0": 0, "1": 0, "3": 1, fields["list_rank"]: 2},
+    )
+    ch.wait_for_import(pb_id, expected=1)      # polls numbers_count
+```
+
+Gotchas (verified live 2026-10-15): CallHub **always drops the first CSV row**
+as a header (`bulk_create_contacts(rows=...)` writes one for you); a custom
+field's import-mapping id (from `/v1/contacts/fields/`) differs from its
+`/v1/custom_fields/` id; a number already in the phonebook is replaced, not
+added; bulk import is paced to one call per 70 s and five per hour; auth
+failures are 403, not 401. See the module docstring for the full list.
 
 ### Tatango Example
 
@@ -2028,4 +2060,4 @@ For issues or questions:
 
 ## Version
 
-Current version: 0.25.0
+Current version: 0.26.0
