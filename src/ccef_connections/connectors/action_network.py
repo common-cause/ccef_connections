@@ -11,6 +11,7 @@ OSDI/HAL+JSON format with pagination via ``_links.next.href``.
 """
 
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -27,6 +28,29 @@ from ..exceptions import (
 logger = logging.getLogger(__name__)
 
 ACTION_NETWORK_API_BASE = "https://actionnetwork.org/api/v2"
+
+# Transient gateway errors, retried for replay-safe methods ONLY (0.24.0).
+#
+# WHY THIS EXISTS: roi-an-sync's nightly job failed on 2026-10-15 because one
+# custom-field PUT out of ~460 that night drew a Cloudflare "502: Bad gateway"
+# page from actionnetwork.org. Nothing was wrong with the request; the edge
+# simply could not reach AN's origin for a moment.
+#
+# WHY IT IS SAFE HERE: the retry happens per HTTP request inside _request(),
+# not per decorated method, so a multi-step method never replays a step that
+# already succeeded. And it is limited to GET, PUT and DELETE. Every PUT in
+# this connector sets fields on an existing resource (people, events, forms,
+# messages, wrappers, metadata...) and converges on replay; DELETE of a
+# tagging that is already gone is a no-op. POST is excluded: create_person,
+# add_tagging, create_attendance, the message send/schedule helpers and the
+# rest can duplicate a person, signup or email if replayed, so a 5xx on a
+# POST still surfaces immediately, per the module policy in core/retry.py.
+#
+# 500 and 501 are deliberately absent: a 500 means AN's own code failed on
+# this request and may fail the same way again; a 501 is a permanent answer.
+_TRANSIENT_GATEWAY_STATUSES = frozenset({502, 503, 504})
+_REPLAY_SAFE_METHODS = frozenset({"GET", "PUT", "DELETE"})
+_GATEWAY_RETRY_DELAYS = (2.0, 5.0)  # seconds before attempts 2 and 3
 
 
 class ActionNetworkConnector(BaseConnection):
@@ -130,26 +154,42 @@ class ActionNetworkConnector(BaseConnection):
         Raises:
             AuthenticationError: On 401 responses
             RateLimitError: On 429 responses
-            ConnectionError: On other HTTP errors or network failures
+            ConnectionError: On other HTTP errors or network failures. A
+                502/503/504 on GET, PUT or DELETE is retried twice first
+                (see _TRANSIENT_GATEWAY_STATUSES); on POST it is not.
         """
         if not self._is_connected and not self._api_key:
             self.connect()
 
         url = f"{ACTION_NETWORK_API_BASE}{path}"
+        replay_safe = method.upper() in _REPLAY_SAFE_METHODS
+        delays = _GATEWAY_RETRY_DELAYS if replay_safe else ()
 
-        try:
-            resp = requests.request(
-                method,
-                url,
-                headers=self._get_headers(),
-                params=params,
-                json=json_body,
-                timeout=30,
-            )
-        except requests.RequestException as e:
-            raise ConnectionError(
-                f"Action Network API request failed: {e}"
-            ) from e
+        for attempt in range(len(delays) + 1):
+            try:
+                resp = requests.request(
+                    method,
+                    url,
+                    headers=self._get_headers(),
+                    params=params,
+                    json=json_body,
+                    timeout=30,
+                )
+            except requests.RequestException as e:
+                raise ConnectionError(
+                    f"Action Network API request failed: {e}"
+                ) from e
+
+            if resp.status_code not in _TRANSIENT_GATEWAY_STATUSES:
+                break
+            if attempt < len(delays):
+                logger.warning(
+                    "Action Network %s %s returned %s; retrying in %.0fs "
+                    "(attempt %d of %d)",
+                    method, path, resp.status_code, delays[attempt],
+                    attempt + 2, len(delays) + 1,
+                )
+                time.sleep(delays[attempt])
 
         if resp.status_code == 401:
             raise AuthenticationError(

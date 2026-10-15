@@ -996,7 +996,7 @@ Per-service detail:
 - **HelpScout**: 5 retries on 429, with auto token refresh on 401
 - **Zendesk**: 5 retries on 429, honoring the exact `Retry-After` plus a 2s buffer. The rate budget is per-*account* and shared with IT's automation, so the connector also self-throttles client-side (default 120 req/min, under the ~400/min ceiling)
 - **Zoom**: 5 retries on 429, with auto token refresh on 401
-- **Action Network**: 5 retries on 429 (4 req/s limit). Matters more here than elsewhere — many decorated methods write to a people database, so an unknown-state write is never replayed
+- **Action Network**: 5 retries on 429 (4 req/s limit). Matters more here than elsewhere — many decorated methods write to a people database, so an unknown-state write is never replayed. **One exception (0.24.0):** a 502/503/504 gateway error on a GET, PUT or DELETE is retried twice (after 2s, then 5s) inside the single HTTP request. Every PUT here sets fields on an existing resource and converges on replay; POSTs (`create_person`, `add_tagging`, `send_message`, ...) are never retried on 5xx, and neither is a 500 on any method. Added after a lone Cloudflare 502 on one custom-field PUT failed roi-an-sync's nightly job
 - **Action Builder**: 5 retries, handles 429 rate limits (4 req/s)
 - **Asana**: 5 retries on 429 rate limit only (1,500 req/min paid, 150 free), honoring the exact `Retry-After` duration the API specifies plus a 2s buffer. Other HTTP errors — including 402 for paid-tier features on a free workspace — surface immediately.
 - **PTV**: 5 retries on 429 only. Narrowed in 0.10.0 — it previously also retried the library's `ConnectionError`, which wraps both a genuine `requests` transport failure *and* any 4xx/5xx response, so a PTV 404 or a bad API key cost five attempts and ~30s of backoff before surfacing. A missing `PTV_API_KEY_PASSWORD` was the worst case, since `connect()` wraps `CredentialError` into `ConnectionError` too. Real transport blips no longer retry — the connector can't tell them apart from a 4xx after wrapping, so re-running a multi-state pull beats making every hard failure pay 30s first
@@ -2028,4 +2028,4 @@ For issues or questions:
 
 ## Version
 
-Current version: 0.23.0
+Current version: 0.24.0
