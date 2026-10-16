@@ -10,8 +10,11 @@ offers entities. It is asynchronous:
      when done, a ``download_url`` that is valid for about 10 minutes.
   3. The download is a plain CSV (one row per line item).
 
-Authentication is HTTP Basic with the credential's ``uuid`` and ``secret``,
-read from ``ACTBLUE_API_KEY_PASSWORD`` as ``{"uuid": ..., "secret": ...}``.
+Each ActBlue entity has its own credential, so the connector is built for one:
+``ActBlueConnector("c4")`` (Common Cause) reads ``ACTBLUE_C4_API_KEY_PASSWORD``,
+``ActBlueConnector("c3")`` (Common Cause Education Fund) reads
+``ACTBLUE_C3_API_KEY_PASSWORD``. Authentication is HTTP Basic with the
+credential's ``uuid`` and ``secret``, stored as ``{"uuid": ..., "secret": ...}``.
 There is no whoami endpoint; ``GET /csvs/<random uuid>`` answering 404 "CSV
 request not found" proves the key authenticates (401 = bad key).
 
@@ -64,26 +67,36 @@ class ActBlueConnector(BaseConnection):
     ActBlue CSV API connector (read-only).
 
     Examples:
-        >>> ab = ActBlueConnector()
+        >>> ab = ActBlueConnector("c4")
         >>> rows = ab.fetch_csv("paid_contributions", "2026-08-22", "2026-08-23")
         >>> rows[0].keys()   # the CSV header, as ActBlue names it
     """
 
-    def __init__(self) -> None:
-        """Initialize the ActBlue connector."""
+    def __init__(self, entity: str) -> None:
+        """
+        Initialize the ActBlue connector.
+
+        Args:
+            entity: ``"c4"`` (Common Cause) or ``"c3"`` (Common Cause
+                Education Fund) -- which entity's credential to use. Required:
+                the two see different contributions.
+        """
         super().__init__()
+        self.entity = str(entity).lower()
+        if self.entity not in ("c3", "c4"):
+            raise ValueError(f"ActBlue entity must be 'c3' or 'c4', got {entity!r}")
         self._auth: Optional[tuple] = None
 
     def connect(self) -> None:
         """
-        Load the ActBlue credential. Makes no API call.
+        Load the entity's ActBlue credential. Makes no API call.
 
         Raises:
-            CredentialError: If ``ACTBLUE_API_KEY_PASSWORD`` is missing or malformed
+            CredentialError: If ``ACTBLUE_<C3|C4>_API_KEY_PASSWORD`` is missing or malformed
             ConnectionError: If credential loading fails for any other reason
         """
         try:
-            creds = self._credential_manager.get_actblue_credentials()
+            creds = self._credential_manager.get_actblue_credentials(self.entity)
             self._auth = (creds["uuid"], creds["secret"])
             self._is_connected = True
             logger.info("Successfully connected to ActBlue")

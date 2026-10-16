@@ -2028,4 +2028,4 @@ For issues or questions:
 
 ## Version
 
-Current version: 0.24.0
+Current version: 0.25.0

@@ -24,7 +24,7 @@ def _resp(status=200, body=None, text="", content=b""):
 
 @pytest.fixture
 def ab():
-    c = ActBlueConnector()
+    c = ActBlueConnector("c4")
     c._credential_manager = MagicMock()
     c._credential_manager.get_actblue_credentials.return_value = CREDS
     return c
@@ -40,19 +40,39 @@ def _fresh_manager():
 
 class TestCredentials:
     def test_reads_json_uuid_secret(self):
-        with patch.dict("os.environ", {"ACTBLUE_API_KEY_PASSWORD": json.dumps(CREDS)}):
-            assert _fresh_manager().get_actblue_credentials() == CREDS
+        with patch.dict("os.environ", {"ACTBLUE_C4_API_KEY_PASSWORD": json.dumps(CREDS)}):
+            assert _fresh_manager().get_actblue_credentials("c4") == CREDS
+
+    def test_entities_read_their_own_key(self):
+        c3 = {"uuid": "u-c3", "secret": "s-c3"}
+        env = {"ACTBLUE_C4_API_KEY_PASSWORD": json.dumps(CREDS),
+               "ACTBLUE_C3_API_KEY_PASSWORD": json.dumps(c3)}
+        with patch.dict("os.environ", env):
+            mgr = _fresh_manager()
+            assert mgr.get_actblue_credentials("C3") == c3
+            assert mgr.get_actblue_credentials("c4") == CREDS
+
+    def test_rejects_unknown_entity(self):
+        with pytest.raises(CredentialError, match="entity"):
+            _fresh_manager().get_actblue_credentials("c5")
 
     def test_rejects_missing_secret(self):
-        with patch.dict("os.environ", {"ACTBLUE_API_KEY_PASSWORD": json.dumps({"uuid": "x"})}):
+        with patch.dict("os.environ", {"ACTBLUE_C4_API_KEY_PASSWORD": json.dumps({"uuid": "x"})}):
             with pytest.raises(CredentialError, match="uuid"):
-                _fresh_manager().get_actblue_credentials()
+                _fresh_manager().get_actblue_credentials("c4")
 
 
 class TestConnect:
     def test_connect_sets_basic_auth(self, ab):
         ab.connect()
         assert ab._auth == ("u-123", "s-456") and ab.is_connected()
+        ab._credential_manager.get_actblue_credentials.assert_called_once_with("c4")
+
+    def test_entity_required_and_checked(self):
+        with pytest.raises(TypeError):
+            ActBlueConnector()
+        with pytest.raises(ValueError, match="entity"):
+            ActBlueConnector("c5")
 
 
 class TestRequestCsv:

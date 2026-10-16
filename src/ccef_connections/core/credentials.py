@@ -349,23 +349,34 @@ class CredentialManager:
         """
         return str(self.get_credential("SIGNUPGENIUS_API_KEY"))
 
-    def get_actblue_credentials(self) -> Dict[str, str]:
+    def get_actblue_credentials(self, entity: str) -> Dict[str, str]:
         """
-        Get ActBlue CSV API credentials.
+        Get ActBlue CSV API credentials for one entity.
 
-        ``ACTBLUE_API_KEY_PASSWORD`` holds ``{"uuid": "...", "secret": "..."}``
-        (created in ActBlue under Dashboard → Integrations → API credentials).
+        Each ActBlue entity has its own API credential:
+        ``ACTBLUE_C4_API_KEY_PASSWORD`` (Common Cause) and
+        ``ACTBLUE_C3_API_KEY_PASSWORD`` (Common Cause Education Fund), each
+        ``{"uuid": "...", "secret": "..."}`` (created in ActBlue under
+        Dashboard → Admin → API Credentials).
+
+        Args:
+            entity: ``"c4"`` or ``"c3"``
 
         Returns:
             Dict with ``uuid`` and ``secret``
 
         Raises:
-            CredentialError: If missing, not JSON, or lacking either key
+            CredentialError: If the entity is unknown, or the credential is
+                missing, not JSON, or lacking either key
         """
-        creds = self.get_credential("ACTBLUE_API_KEY", is_json=True)
+        entity = str(entity).lower()
+        if entity not in ("c3", "c4"):
+            raise CredentialError(f"ActBlue entity must be 'c3' or 'c4', got {entity!r}")
+        name = f"ACTBLUE_{entity.upper()}_API_KEY"
+        creds = self.get_credential(name, is_json=True)
         if not isinstance(creds, dict) or not creds.get("uuid") or not creds.get("secret"):
             raise CredentialError(
-                'ACTBLUE_API_KEY_PASSWORD must be a JSON object {"uuid": ..., "secret": ...}'
+                f'{name}_PASSWORD must be a JSON object {{"uuid": ..., "secret": ...}}'
             )
         return {"uuid": str(creds["uuid"]), "secret": str(creds["secret"])}
 
