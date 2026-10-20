@@ -940,6 +940,82 @@ class ZendeskConnector(BaseConnection):
         )["ticket"]
 
     @retry_zendesk_operation
+    def upload_attachment(
+        self,
+        data: bytes,
+        filename: str,
+        content_type: str = "application/octet-stream",
+        max_bytes: int = 50 * 1024 * 1024,
+    ) -> Dict[str, Any]:
+        """
+        Upload one file so a ticket comment can attach it.
+
+        Attaching is two steps in Zendesk: ``POST /uploads`` with the raw bytes
+        returns an upload ``token``; the file then rides on a ticket update as
+        ``{"comment": {"body": ..., "uploads": [token]}}``. An upload nobody
+        attaches expires on its own after 60 minutes (the token after 3 days),
+        so this call alone changes nothing on any ticket -- the ticket update is
+        where the write actually lands, and that is the caller's to guard.
+
+        Not a JSON request, so it bypasses ``_request``: the body is the file
+        itself and ``Content-Type`` is the file's type.
+
+        Args:
+            data: The file's bytes
+            filename: The name the attachment shows on the ticket
+            content_type: The file's MIME type
+            max_bytes: Refuse anything larger (Zendesk's own ceiling is 50 MB)
+
+        Returns:
+            The upload record: ``token`` plus the ``attachment`` it created
+
+        Raises:
+            ValueError: If the file is empty or over ``max_bytes``
+            AuthenticationError: If authentication fails
+            RateLimitError: If rate limited by the API
+            ConnectionError: On any other HTTP failure
+        """
+        if not data:
+            raise ValueError(f"refusing to upload an empty file ({filename!r})")
+        if len(data) > max_bytes:
+            raise ValueError(
+                f"{filename!r} is {len(data)} bytes, over the {max_bytes}-byte cap"
+            )
+        if not self._is_connected and not self._access_token:
+            self.connect()
+        self._throttle()
+        try:
+            resp = requests.post(
+                f"{self.api_base}/uploads.json",
+                params={"filename": filename},
+                headers={
+                    "Authorization": self._get_headers()["Authorization"],
+                    "Content-Type": content_type,
+                },
+                data=data,
+                timeout=120,
+            )
+        except requests.RequestException as e:
+            raise ConnectionError(f"Zendesk attachment upload failed: {e}") from e
+        finally:
+            self._last_request_at = time.time()
+        self._record_rate_limit(resp)
+        if resp.status_code == 401:
+            raise AuthenticationError("Zendesk authentication failed on attachment upload")
+        if resp.status_code == 429:
+            retry_after = int(resp.headers.get("Retry-After", 10))
+            raise RateLimitError(
+                f"Zendesk rate limit exceeded, retry after {retry_after}s "
+                f"(budget is instance-wide and shared with IT automation)",
+                retry_after=retry_after,
+            )
+        if resp.status_code >= 400:
+            raise ConnectionError(
+                f"Zendesk attachment upload error {resp.status_code}: {resp.text[:300]}"
+            )
+        return resp.json()["upload"]
+
+    @retry_zendesk_operation
     def create_many_tickets(self, tickets: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         Create up to 100 tickets in one asynchronous job.

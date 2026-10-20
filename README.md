@@ -10,7 +10,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 - **BigQuery**: Full read/write data warehouse operations
 - **Snowflake**: Read access to the `CMNC_DATA` replica — ROI CRM data, the Unite data model, and the Fivetran mirrors; `(columns, rows)`, dicts or DataFrames
 - **HelpScout**: Automated email processing — read conversations, reply, add notes, close
-- **Zendesk**: Read access to ticketing and configuration objects, ticket create/update, attachment download, and a deliberately narrow set of single-object config writes for reviewed config-as-code
+- **Zendesk**: Read access to ticketing and configuration objects, ticket create/update, attachment download and upload, and a deliberately narrow set of single-object config writes for reviewed config-as-code
 - **Zoom**: Meeting and webinar attendee retrieval — participants, registrants, absentees
 - **Action Network**: Full CRM access — people, tags, events, petitions, forms, fundraising, messages, and more
 - **Action Builder**: Field organizing and relationship mapping — campaigns, people/entities, tags, taggings, and connections
@@ -1217,7 +1217,7 @@ Schedules fire in the **owning account's timezone**, exposed as `timeZone` on th
 
 ### ZendeskConnector
 
-Read access to a Zendesk Suite instance's ticketing and configuration objects, ticket create/update, attachment download, and a deliberately narrow set of single-object config writes.
+Read access to a Zendesk Suite instance's ticketing and configuration objects, ticket create/update, attachment download and upload, and a deliberately narrow set of single-object config writes.
 
 **Credential:** `ZENDESK_CREDENTIALS_PASSWORD` — JSON with `client_id` and `client_secret`. `client_id` is the OAuth client's *Identifier* field (an author-chosen slug), **not** its numeric id. The instance comes from `ZENDESK_SUBDOMAIN` (or the `subdomain=` constructor arg).
 
@@ -1241,6 +1241,7 @@ Reads:
 Writes (require the read-write scope):
 
 - `create_ticket(ticket)` / `update_ticket(ticket_id, ticket)` - Single ticket create/update.
+- `upload_attachment(data, filename, content_type)` - Upload one file's bytes; returns the upload record. Attach it by passing `upload["token"]` in `comment.uploads` on an `update_ticket`/`create_ticket` — the upload alone changes no ticket, and an unattached upload expires after 60 minutes.
 - `create_many_tickets(tickets)` - Up to 100 tickets in one async job; returns the job status record (already unwrapped), which you poll via `get_job_status(job["id"])`. Raises `ValueError` above 100.
 - `create_ticket_field(field)` / `update_ticket_field(field_id, field)` / `update_ticket_form(form_id, form)` / `create_trigger(trigger)` / `update_trigger(trigger_id, trigger)` - Single-object config writes for reviewed config-as-code.
 - `create_trigger_category(category)` / `update_trigger_category(category_id, category)` - Trigger categories. **`update_` uses PATCH**, unlike every other mutator here, and `position` is instance-wide firing order — moving your category re-orders everyone else's relative to it, so prefer appending at the end.
@@ -2060,4 +2061,4 @@ For issues or questions:
 
 ## Version
 
-Current version: 0.26.0
+Current version: 0.27.0

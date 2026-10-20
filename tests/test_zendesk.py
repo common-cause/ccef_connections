@@ -508,6 +508,7 @@ class TestWrites:
             "create_ticket",
             "update_ticket",
             "create_many_tickets",
+            "upload_attachment",
             # config objects, one at a time, by explicit id
             "create_ticket_field",
             "update_ticket_field",
@@ -530,7 +531,9 @@ class TestWrites:
             name
             for name in dir(connector)
             if not name.startswith("_")
-            and any(name.startswith(v) for v in ("create_", "update_", "delete_"))
+            and any(
+                name.startswith(v) for v in ("create_", "update_", "delete_", "upload_")
+            )
         }
         assert actual == allowed
 
@@ -967,3 +970,40 @@ class TestDownloadAttachment:
         mock_get.return_value = self._stream(status_code=404)
         with pytest.raises(ConnectionError, match="404"):
             connected_connector.download_attachment(self.URL)
+
+
+class TestUploadAttachment:
+    UPLOAD = {"token": "tok123", "attachment": {"id": 9, "file_name": "a.xlsx"}}
+
+    @patch("ccef_connections.connectors.zendesk.requests.post")
+    def test_posts_raw_bytes_and_returns_upload(self, mock_post, connected_connector):
+        mock_post.return_value = _make_response(201, {"upload": self.UPLOAD})
+        out = connected_connector.upload_attachment(b"abcd", "a.xlsx", "application/x-test")
+        assert out == self.UPLOAD
+        args, kwargs = mock_post.call_args
+        assert args[0] == f"https://{SUBDOMAIN}.zendesk.com/api/v2/uploads.json"
+        assert kwargs["params"] == {"filename": "a.xlsx"}
+        assert kwargs["data"] == b"abcd"
+        assert kwargs["headers"]["Content-Type"] == "application/x-test"
+        assert kwargs["headers"]["Authorization"] == "Bearer fake-token-abc"
+
+    @patch("ccef_connections.connectors.zendesk.requests.post")
+    def test_empty_and_oversize_refused_before_any_request(self, mock_post, connected_connector):
+        with pytest.raises(ValueError, match="empty"):
+            connected_connector.upload_attachment(b"", "a.txt")
+        with pytest.raises(ValueError, match="cap"):
+            connected_connector.upload_attachment(b"x" * 20, "a.txt", max_bytes=10)
+        mock_post.assert_not_called()
+
+    @patch("ccef_connections.connectors.zendesk.requests.post")
+    def test_http_error_raises(self, mock_post, connected_connector):
+        mock_post.return_value = _make_response(422, text="bad")
+        with pytest.raises(ConnectionError, match="422"):
+            connected_connector.upload_attachment(b"abcd", "a.txt")
+
+    @patch("ccef_connections.connectors.zendesk.time.sleep")
+    @patch("ccef_connections.connectors.zendesk.requests.post")
+    def test_rate_limit_raises(self, mock_post, _sleep, connected_connector):
+        mock_post.return_value = _make_response(429, headers={"Retry-After": "1"})
+        with pytest.raises(RateLimitError):
+            connected_connector.upload_attachment(b"abcd", "a.txt")
