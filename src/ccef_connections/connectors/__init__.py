@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from .bigquery import BigQueryConnector
     from .callhub import CallHubConnector
     from .civis import CivisConnector
+    from .drive import DriveConnector
     from .email_connector import EmailConnector
     from .geocodio import GeocodioConnector
     from .google_address_validation import GoogleAddressValidationConnector
@@ -51,6 +52,7 @@ _LAZY_IMPORTS = {
     "BigQueryConnector": ("bigquery", "bigquery"),
     "CallHubConnector": ("callhub", None),
     "CivisConnector": ("civis", None),
+    "DriveConnector": ("drive", "sheets"),
     "EmailConnector": ("email_connector", None),
     "GeocodioConnector": ("geocodio", None),
     "GoogleAddressValidationConnector": ("google_address_validation", None),

@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from .connectors.bigquery import BigQueryConnector
     from .connectors.callhub import CallHubConnector
     from .connectors.civis import CivisConnector
+    from .connectors.drive import DriveConnector
     from .connectors.email_connector import EmailConnector
     from .connectors.geocodio import GeocodioConnector
     from .connectors.google_address_validation import GoogleAddressValidationConnector
@@ -58,7 +59,7 @@ if TYPE_CHECKING:
     from .connectors.zendesk import ZendeskConnector
     from .connectors.zoom import ZoomConnector
 
-__version__ = "0.27.0"
+__version__ = "0.28.0"
 
 # Lazy attribute -> (module, required extra or None).
 # Connectors with extra=None need only the base install (requests).
@@ -71,6 +72,7 @@ _LAZY_IMPORTS = {
     "BigQueryConnector": ("ccef_connections.connectors.bigquery", "bigquery"),
     "CallHubConnector": ("ccef_connections.connectors.callhub", None),
     "CivisConnector": ("ccef_connections.connectors.civis", None),
+    "DriveConnector": ("ccef_connections.connectors.drive", "sheets"),
     "EmailConnector": ("ccef_connections.connectors.email_connector", None),
     "GeocodioConnector": ("ccef_connections.connectors.geocodio", None),
     "GoogleAddressValidationConnector": ("ccef_connections.connectors.google_address_validation", None),
@@ -107,6 +109,7 @@ __all__ = [
     "BigQueryConnector",
     "CallHubConnector",
     "CivisConnector",
+    "DriveConnector",
     "EmailConnector",
     "GeocodioConnector",
     "GoogleAddressValidationConnector",
