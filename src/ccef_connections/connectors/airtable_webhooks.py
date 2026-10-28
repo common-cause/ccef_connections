@@ -29,12 +29,18 @@ parsing code. Payloads are retained **7 days**.
    Anything built on this must track ``expiration_time`` and say so out loud.
    ``list_webhooks`` returns it for exactly that reason.
 
-2. 🚨 **Payloads carry field IDs by default**, not field names — ``fldXXXX`` keys
-   that match nothing a human or a schema mapping knows. ``create_webhook``
-   therefore defaults ``include_field_names=True``, which sets the API's
-   ``includes.includeCellValuesInFieldIdsOrNames: "names"``. A webhook created
-   elsewhere without it produces payloads that parse to an empty row with no
-   error raised.
+2. 🚨 **Payloads carry field IDs, always** — ``fldXXXX`` keys that match nothing
+   a human or a schema mapping knows, and **there is no option to change that.**
+   Verified empirically against the live API on 2026-10-28: ``includes`` accepts
+   ``includePreviousCellValues`` and ``includePreviousFieldDefinitions``, and
+   rejects ``includeCellValuesInFieldIdsOrNames`` with the same 422
+   INVALID_REQUEST_UNKNOWN it gives a key invented at random. Several
+   third-party write-ups claim that option exists; it does not.
+
+   So a consumer that wants names must translate them itself.
+   ``get_field_map`` returns ``{field_id: name}`` for a table, and a caller
+   should refresh it periodically — a state renaming a field silently changes
+   nothing in the payload except which map entry matches.
 
 ## MAC verification
 
@@ -206,6 +212,27 @@ class AirtableWebhooksConnector(BaseConnection):
         """
         return self._request("GET", f"/meta/bases/{base_id}/tables").get("tables", [])
 
+    def get_field_map(self, base_id: str, table_id: str) -> Dict[str, str]:
+        """``{field_id: field_name}`` for one table.
+
+        The translation layer every webhook consumer needs, because payload
+        cells are keyed by ``fldXXXX`` and nothing in the payload says what
+        those mean (see the module docstring — the API offers no way to get
+        names instead).
+
+        Refresh it on a schedule rather than caching it forever. A renamed or
+        added field does not change the payload shape at all; it just stops
+        matching, so a stale map degrades into silently empty columns.
+        """
+        for table in self.list_tables(base_id):
+            if table.get("id") == table_id:
+                return {
+                    field["id"]: field["name"]
+                    for field in table.get("fields", [])
+                    if field.get("id") and field.get("name")
+                }
+        return {}
+
     # -- registration ---------------------------------------------------------
 
     def list_webhooks(self, base_id: str) -> List[Dict[str, Any]]:
@@ -227,7 +254,6 @@ class AirtableWebhooksConnector(BaseConnection):
         notification_url: str,
         table_id: Optional[str] = None,
         data_types: Optional[List[str]] = None,
-        include_field_names: bool = True,
         include_previous_values: bool = False,
     ) -> Dict[str, Any]:
         """Register a webhook and return Airtable's response.
@@ -242,18 +268,17 @@ class AirtableWebhooksConnector(BaseConnection):
         means quiz rows and polling-place edits ping too, so pass it when you
         know the table.
 
-        ``include_field_names`` sets cell values to arrive keyed by field NAME.
-        See the module docstring: the default the API applies is field IDs, which
-        parse to nothing without a schema fetch to translate them.
+        🚨 Cell values in the resulting payloads are keyed by field ID and
+        cannot be requested by name — pair this with ``get_field_map``.
+
+        ``includes`` accepts only ``includePreviousCellValues`` and
+        ``includePreviousFieldDefinitions``; Airtable 422s anything else,
+        including a key invented at random, so do not add options here without
+        testing them against the live API first.
         """
         options: Dict[str, Any] = {
             "filters": {"dataTypes": data_types or ["tableData"]},
-            "includes": {
-                "includeCellValuesInFieldIdsOrNames": (
-                    "names" if include_field_names else "ids"
-                ),
-                "includePreviousCellValues": include_previous_values,
-            },
+            "includes": {"includePreviousCellValues": include_previous_values},
         }
         if table_id:
             options["filters"]["recordChangeScope"] = table_id
