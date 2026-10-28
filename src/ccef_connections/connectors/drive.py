@@ -2,7 +2,8 @@
 Google Drive connector for CCEF connections library.
 
 File-level Drive access: find/create folders, list a folder, upload binaries,
-rename, and grant access. This is the connector for moving FILES into Drive.
+rename, and grant, list or revoke access. This is the connector for moving
+FILES into Drive.
 Spreadsheet creation and cell writes belong to SheetsWriterConnector, which
 drives the Sheets API and only touches Drive to place a spreadsheet.
 
@@ -290,3 +291,73 @@ class DriveConnector(BaseConnection):
             supportsAllDrives=True,
         ).execute()
         logger.info(f"Granted {role} on {file_id} to {email}")
+
+    @retry_google_operation
+    def list_permissions(self, file_id: str) -> List[Dict[str, Any]]:
+        """
+        Every permission on a file or folder, inherited ones included.
+
+        INHERITANCE IS THE POINT OF THE `inherited` FLAG, and reading it is
+        what separates "we granted this" from "the shared drive did". Inside
+        a shared drive most permissions on a subfolder are inherited from the
+        drive's own membership -- the organizers, an all-staff group, the
+        service account's folder grant -- and a caller reconciling grants
+        against a registry MUST NOT treat those as its own. Drive reports the
+        flag under permissionDetails for shared-drive items, so it is
+        normalised onto the row here as `inherited` and `inherited_from`.
+
+        Returns:
+            [{"id", "type", "role", "email", "domain", "inherited",
+              "inherited_from"}]
+        """
+        out: List[Dict[str, Any]] = []
+        page_token: Optional[str] = None
+        while True:
+            resp = (
+                self._svc()
+                .permissions()
+                .list(
+                    fileId=file_id,
+                    fields=(
+                        "nextPageToken,permissions(id,type,role,emailAddress,"
+                        "domain,deleted,permissionDetails(inherited,inheritedFrom))"
+                    ),
+                    supportsAllDrives=True,
+                    pageSize=100,
+                    pageToken=page_token,
+                )
+                .execute()
+            )
+            for p in resp.get("permissions", []):
+                details = (p.get("permissionDetails") or [{}])[0]
+                out.append(
+                    {
+                        "id": p.get("id"),
+                        "type": p.get("type"),
+                        "role": p.get("role"),
+                        "email": (p.get("emailAddress") or "").lower() or None,
+                        "domain": p.get("domain"),
+                        "deleted": bool(p.get("deleted")),
+                        "inherited": bool(details.get("inherited")),
+                        "inherited_from": details.get("inheritedFrom"),
+                    }
+                )
+            page_token = resp.get("nextPageToken")
+            if not page_token:
+                return out
+
+    @retry_google_operation
+    def remove_permission(self, file_id: str, permission_id: str) -> None:
+        """
+        Revoke one permission by its id.
+
+        The counterpart to share_file(), and deliberately separate from it:
+        share_file() documents that removing access is a human decision, and
+        this does not change that -- it gives a caller that has ALREADY made
+        the decision a way to carry it out. An inherited permission cannot be
+        removed here; it has to go from whatever it is inherited from.
+        """
+        self._svc().permissions().delete(
+            fileId=file_id, permissionId=permission_id, supportsAllDrives=True
+        ).execute()
+        logger.info(f"Removed permission {permission_id} from {file_id}")
