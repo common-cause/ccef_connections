@@ -243,6 +243,61 @@ class DriveConnector(BaseConnection):
         )
 
     @retry_google_operation
+    def update_file_content(
+        self,
+        file_id: str,
+        local_path: str,
+        name: Optional[str] = None,
+        mime_type: Optional[str] = None,
+        resumable: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Replace a Drive file's CONTENT in place, keeping its id and link.
+
+        The counterpart to upload_file(), which always creates. Without this,
+        a caller that maintains a generated file in Drive -- a README, a
+        manifest, an export -- can only rename it or upload a second copy, so
+        **editing the text produced a file whose name said it was updated and
+        whose body was not**. That is worse than no update at all, and it is
+        exactly what happened to the EP photo folders' README.
+
+        Existing links, permissions and the file's revision history survive;
+        anyone holding the link sees the new content.
+
+        Args:
+            file_id: The file to overwrite
+            local_path: Path to the replacement content on disk
+            name: Also rename, when given
+            mime_type: Content type; unchanged when None
+            resumable: Use a resumable upload
+
+        Returns:
+            {"id", "name", "webViewLink"}
+        """
+        if not os.path.exists(local_path):
+            raise FileNotFoundError(f"Local file not found: {local_path}")
+        media = MediaFileUpload(
+            local_path,
+            mimetype=mime_type or "application/octet-stream",
+            resumable=resumable,
+        )
+        body: Dict[str, Any] = {}
+        if name:
+            body["name"] = name
+        return (
+            self._svc()
+            .files()
+            .update(
+                fileId=file_id,
+                body=body,
+                media_body=media,
+                fields="id,name,webViewLink",
+                supportsAllDrives=True,
+            )
+            .execute()
+        )
+
+    @retry_google_operation
     def rename_file(self, file_id: str, new_name: str) -> Dict[str, Any]:
         """Rename a Drive file in place, keeping its id and link."""
         return (
