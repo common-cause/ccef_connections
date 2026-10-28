@@ -563,6 +563,64 @@ class CredentialManager:
                 f"expected one of key/api_key/token/secret, got {sorted(raw)}"
             )
         return str(raw)
+
+    def get_paypal_credentials(self, credential_name: str = "PAYPAL_API_KEY") -> Dict[str, str]:
+        """
+        Get a PayPal REST app's client id and secret.
+
+        JSON: ``{"client_id": "...", "secret": "..."}``.
+
+        ⚠ **Several key spellings are accepted** — the catalog first seeded this as
+        ``{"client ID": ..., "secret": ...}``, so ``client_id`` / ``client ID`` /
+        ``clientId`` / ``client id`` and ``secret`` / ``client_secret`` /
+        ``clientSecret`` all work. A rotation should not need a code change.
+
+        ⚠ **The same value in both fields is refused.** It has happened: one value
+        seeded twice. PayPal answers that with a bare ``invalid_client``, which reads
+        as the wrong environment rather than a bad seed.
+
+        Args:
+            credential_name: Name of the credential (default: "PAYPAL_API_KEY").
+                The env var read is {credential_name}_PASSWORD.
+
+        Returns:
+            ``{"client_id": ..., "secret": ...}``
+
+        Raises:
+            CredentialError: If the credential is missing, not JSON, or incomplete
+        """
+        raw = self.get_credential(credential_name)
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except ValueError:
+                raise CredentialError(
+                    f"{credential_name}_PASSWORD is not JSON; expected "
+                    '{"client_id": ..., "secret": ...}'
+                )
+        if not isinstance(raw, dict):
+            raise CredentialError(f"{credential_name}_PASSWORD must be a JSON object")
+
+        def pick(*names: str) -> Optional[str]:
+            for n in names:
+                if raw.get(n):
+                    return str(raw[n]).strip()
+            return None
+
+        cid = pick("client_id", "client ID", "clientId", "client id")
+        sec = pick("secret", "client_secret", "clientSecret")
+        if not cid or not sec:
+            raise CredentialError(
+                f"{credential_name}_PASSWORD is missing a client id or secret; "
+                f"keys present: {sorted(raw)}"
+            )
+        if cid == sec:
+            raise CredentialError(
+                f"{credential_name}_PASSWORD has the same value in both fields -- one "
+                f"value was seeded twice. Reseed from the app's Client ID and Secret."
+            )
+        return {"client_id": cid, "secret": sec}
+
     def get_render_api_key(self, credential_name: str = "RENDER_API_KEY") -> str:
         """
         Get a Render API key.

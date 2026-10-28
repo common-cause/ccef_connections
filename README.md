@@ -1,6 +1,6 @@
 # CCEF Connections
 
-A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zendesk, Zoom, Action Network, Action Builder, Asana, CallHub, Protect the Vote (PTV), ROI CRM, Geocodio, GitHub, Hex, Civis Platform, Render, Resend (transactional email), Tatango (SMS), and Stripe with Civis credential compatibility.
+A reusable Python library for Common Cause Education Fund data integrations. Provides unified connection management for Airtable, OpenAI, Google Sheets, BigQuery, HelpScout, Zendesk, Zoom, Action Network, Action Builder, Asana, CallHub, Protect the Vote (PTV), ROI CRM, Geocodio, GitHub, Hex, Civis Platform, Render, Resend (transactional email), Tatango (SMS), Stripe, and PayPal with Civis credential compatibility.
 
 ## Features
 
@@ -26,6 +26,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 - **Render**: The platform our internal Flask tools run *on* — services and their lifecycle (restart, suspend/resume, scale, plan change, rollback), deploys, app/request/build logs, the event timeline, metrics against the plan's own ceiling, custom domains and DNS verification, and environment variables. Pass `blueprint_path` and it refuses to write env vars that `render.yaml` owns, which Render would silently revert on the next Blueprint sync. `list_events` is the only place an **OOM kill** is recorded — the instance restarts, the health check passes and the dashboard goes back to green, so nothing else in the API says it happened
 - **Email (Resend)**: Transactional email — magic-links, notifications — via Resend's HTTP API
 - **Stripe**: Read access for reconciliation — charges, refunds, disputes, payouts and balance transactions, across **multiple Stripe accounts** from one connector
+- **PayPal**: Read access to Transaction Search for reconciliation — payments, withdrawals, the DAF sponsor behind each payment, and the withdrawal that paid each one out
 - **CallHub**: P2P texting / call center platform — contact lists ("phonebooks"), paced CSV bulk import into a phonebook with an import-completion wait, the contact-field mapping catalogue, custom fields, DNC entries, tags, and read-only campaign/agent/team listings. No campaign start/stop by design
 - **Tatango**: SMS broadcast platform (Messaging API v2) — subscribers with opt-in bypass flags, per-list custom fields, and webhook registrations
 - **Unified Credentials**: `{CREDENTIAL_NAME}_PASSWORD` pattern for Civis compatibility
@@ -37,7 +38,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 Dependencies are split by connector. The base install is lightweight
 (`requests`, `tenacity`, `python-dotenv`) and covers core plus all REST
 connectors: Action Builder, Action Network, Asana, CallHub, Civis, Email (Resend),
-Geocodio, GitHub, HelpScout, Hex, PTV, ROI CRM, SignUpGenius, Tatango, and Zoom. Heavier connectors are opt-in via extras:
+Geocodio, GitHub, HelpScout, Hex, PayPal, PTV, ROI CRM, SignUpGenius, Tatango, and Zoom. Heavier connectors are opt-in via extras:
 
 | Extra | Enables | Pulls in |
 |---|---|---|
@@ -700,6 +701,27 @@ lines = stripe.list_balance_transactions(payout=payouts[0]["id"], account="c3")
   guessed, because reconciling the wrong entity's money is worse than an error.
 - **A 403 is not a bad key.** It means the restricted key authenticated but lacks a
   permission for that resource. `connect()` warns and continues; only a 401 raises.
+
+### PayPal Example
+
+```python
+from ccef_connections import PayPalConnector
+from ccef_connections.connectors import paypal as pp
+
+paypal = PayPalConnector()
+paypal.connect()          # refuses an app without the Transaction Search scope
+txns = paypal.transactions("2026-10-01", "2026-10-31")   # chunked to 31 days, paged
+
+wds = pp.withdrawals(txns)
+for t in pp.payments(txns):                     # T0001 grants; EVENT_MONEY_IN for all
+    print(pp.as_date(t), pp.sponsor_of(t),
+          pp.amount(pp.info(t)["transaction_amount"]), pp.payout_date(t, wds))
+```
+
+- **The donor is not in this API.** `payer_name` is always PayPal; the sponsor is in
+  `transaction_subject`. Donor and designation come from the sponsor's grant report.
+- **Dates are UTC.** Convert `as_datetime` for Eastern reporting.
+- **The payout date is derived** — the first withdrawal after the payment, by timestamp.
 
 ### Geocodio Example
 
