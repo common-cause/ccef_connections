@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from .connectors.action_network import ActionNetworkConnector
     from .connectors.actblue import ActBlueConnector
     from .connectors.airtable import AirtableConnector
+    from .connectors.airtable_webhooks import AirtableWebhooksConnector
     from .connectors.asana import AsanaConnector
     from .connectors.bigquery import BigQueryConnector
     from .connectors.callhub import CallHubConnector
@@ -68,6 +69,9 @@ _LAZY_IMPORTS = {
     "ActionNetworkConnector": ("ccef_connections.connectors.action_network", None),
     "ActBlueConnector": ("ccef_connections.connectors.actblue", None),
     "AirtableConnector": ("ccef_connections.connectors.airtable", "airtable"),
+    # No extra: the webhooks API is plain REST, and a consumer that only wants
+    # live change notification should not have to install pyairtable for it.
+    "AirtableWebhooksConnector": ("ccef_connections.connectors.airtable_webhooks", None),
     "AsanaConnector": ("ccef_connections.connectors.asana", None),
     "BigQueryConnector": ("ccef_connections.connectors.bigquery", "bigquery"),
     "CallHubConnector": ("ccef_connections.connectors.callhub", None),
@@ -105,6 +109,7 @@ __all__ = [
     "ActionNetworkConnector",
     "ActBlueConnector",
     "AirtableConnector",
+    "AirtableWebhooksConnector",
     "AsanaConnector",
     "BigQueryConnector",
     "CallHubConnector",
