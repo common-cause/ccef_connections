@@ -343,6 +343,135 @@ class TestGetAllValues:
         assert result == []
 
 
+# -- get_tabs_values ----------------------------------------------------------
+
+
+def _batch_spreadsheet(connected_connector, titles, value_ranges):
+    """Wire a fake spreadsheet whose worksheets() returns `titles` and whose
+    values_batch_get returns `value_ranges`."""
+    mock_spreadsheet = MagicMock()
+    mock_spreadsheet.worksheets.return_value = [
+        MagicMock(**{"title": t}) for t in titles
+    ]
+    mock_spreadsheet.values_batch_get.return_value = {"valueRanges": value_ranges}
+    connected_connector._client.open_by_key.return_value = mock_spreadsheet
+    return mock_spreadsheet
+
+
+class TestGetTabsValues:
+    def test_reads_several_tabs_in_one_batch_call(self, connected_connector):
+        sheet = _batch_spreadsheet(
+            connected_connector,
+            ["Week 2", "Week 3", "Ignored"],
+            [
+                {"values": [["Name", "Email"], ["Alice", "alice@example.com"]]},
+                {"values": [["Name", "Email"], ["Bob", "bob@example.com"]]},
+            ],
+        )
+
+        result = connected_connector.get_tabs_values(
+            SAMPLE_SPREADSHEET_ID, ["Week 2", "Week 3"]
+        )
+
+        assert list(result) == ["Week 2", "Week 3"]
+        assert result["Week 2"][1] == ["Alice", "alice@example.com"]
+        assert result["Week 3"][1] == ["Bob", "bob@example.com"]
+        # The whole point: ONE values call for every tab, not one per tab.
+        sheet.values_batch_get.assert_called_once()
+        sheet.worksheet.assert_not_called()
+
+    def test_quotes_titles_containing_spaces(self, connected_connector):
+        # A bare title breaks A1 notation, and most real tabs have a space.
+        sheet = _batch_spreadsheet(
+            connected_connector, ["Los Angeles"], [{"values": [["x"]]}]
+        )
+
+        connected_connector.get_tabs_values(SAMPLE_SPREADSHEET_ID, ["Los Angeles"])
+
+        sheet.values_batch_get.assert_called_once_with(["'Los Angeles'"])
+
+    def test_quotes_titles_containing_an_apostrophe(self, connected_connector):
+        sheet = _batch_spreadsheet(
+            connected_connector, ["Hawai'i"], [{"values": [["x"]]}]
+        )
+
+        connected_connector.get_tabs_values(SAMPLE_SPREADSHEET_ID, ["Hawai'i"])
+
+        sheet.values_batch_get.assert_called_once_with(["'Hawai''i'"])
+
+    def test_none_reads_every_tab(self, connected_connector):
+        sheet = _batch_spreadsheet(
+            connected_connector,
+            ["A", "B"],
+            [{"values": [["1"]]}, {"values": [["2"]]}],
+        )
+
+        result = connected_connector.get_tabs_values(SAMPLE_SPREADSHEET_ID)
+
+        assert list(result) == ["A", "B"]
+        sheet.values_batch_get.assert_called_once_with(["'A'", "'B'"])
+
+    def test_pads_ragged_rows_like_get_all_values(self, connected_connector):
+        _batch_spreadsheet(
+            connected_connector,
+            ["T"],
+            [{"values": [["a", "b", "c"], ["d"]]}],
+        )
+
+        result = connected_connector.get_tabs_values(SAMPLE_SPREADSHEET_ID, ["T"])
+
+        assert result["T"] == [["a", "b", "c"], ["d", "", ""]]
+
+    def test_empty_tab_is_empty_not_one_blank_row(self, connected_connector):
+        # gspread's fill_gaps([]) returns [[]]; a caller counting rows would
+        # otherwise see 1 row in an empty tab.
+        _batch_spreadsheet(connected_connector, ["T"], [{}])
+
+        result = connected_connector.get_tabs_values(SAMPLE_SPREADSHEET_ID, ["T"])
+
+        assert result["T"] == []
+
+    def test_missing_tab_raises_by_default(self, connected_connector):
+        _batch_spreadsheet(connected_connector, ["Real"], [])
+
+        with pytest.raises(ValueError, match="Nope"):
+            connected_connector.get_tabs_values(SAMPLE_SPREADSHEET_ID, ["Nope"])
+
+    def test_missing_tab_skipped_when_missing_ok(self, connected_connector):
+        sheet = _batch_spreadsheet(
+            connected_connector, ["Real"], [{"values": [["x"]]}]
+        )
+
+        result = connected_connector.get_tabs_values(
+            SAMPLE_SPREADSHEET_ID, ["Real", "Nope"], missing_ok=True
+        )
+
+        assert list(result) == ["Real"]
+        sheet.values_batch_get.assert_called_once_with(["'Real'"])
+
+    def test_no_resolvable_tabs_makes_no_values_call(self, connected_connector):
+        sheet = _batch_spreadsheet(connected_connector, ["Real"], [])
+
+        result = connected_connector.get_tabs_values(
+            SAMPLE_SPREADSHEET_ID, ["Nope"], missing_ok=True
+        )
+
+        assert result == {}
+        sheet.values_batch_get.assert_not_called()
+
+    def test_short_response_raises_rather_than_misaligning(
+        self, connected_connector
+    ):
+        # Zipping a short response would shift every tab's values onto the
+        # wrong name, and no caller could detect that.
+        _batch_spreadsheet(
+            connected_connector, ["A", "B"], [{"values": [["only one"]]}]
+        )
+
+        with pytest.raises(ConnectionError, match="1 range"):
+            connected_connector.get_tabs_values(SAMPLE_SPREADSHEET_ID, ["A", "B"])
+
+
 # -- get_range_as_dicts -------------------------------------------------------
 
 

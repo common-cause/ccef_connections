@@ -93,6 +93,42 @@ Full rationale in the header comment of `core/retry.py`. Tests that exercise a d
 retry path must patch `tenacity.nap.time.sleep`; `pytest-timeout` caps every test at 10s
 to catch the ones that don't.
 
+## Sheets connector — the read budget, and why batching is a connector concern
+
+Sheets allows **60 read requests per MINUTE per user**, and "user" is the
+service account, so every job running as `sheets-controllers@` shares one
+bucket. That ceiling is reached by looping, not by volume.
+
+**gspread caches no metadata.** `Spreadsheet.worksheets()` and
+`Spreadsheet.worksheet(title)` each issue their own `spreadsheets.get`, and
+`Spreadsheet.__init__` fetches the file's properties and throws the sheets array
+away — so `get_all_values(id, tab)` costs **three** requests, and reading N tabs
+of one workbook that way costs 3N. ep-syncs' nightly sheet intake went over the
+ceiling on 2026-10-27 at 21 tabs across 9 files (72 requests), and the symptom
+was not an error anyone would read: a 429 is recorded per-source as "refused",
+which looks exactly like an empty tab.
+
+`get_tabs_values(spreadsheet_id, [tabs])` is the answer: **one** metadata request
+plus **one** `values:batchGet`, so the cost is 2 per FILE however many tabs are
+read. Use it for any multi-tab read; `get_all_values` is still right for one tab.
+
+Three things it handles that a hand-rolled batchGet usually doesn't:
+
+- **A1 notation needs the title quoted.** `'Week 2'`, not `Week 2`, and an
+  internal apostrophe doubles (`'Hawai''i'`). Most real tabs have a space in
+  them, so an unquoted range is the default bug, not an edge case.
+- **`fill_gaps([])` returns `[[]]`, not `[]`.** Raw `values.get` trims trailing
+  empties and returns ragged rows, so matching `get_all_values()` means padding
+  — but padding nothing yields one blank row, and a caller counting rows then
+  sees 1 in an empty tab.
+- **A short response is refused, not zipped.** The API answers in request order,
+  so the mapping back to names is positional; silently zipping a short response
+  would put one tab's values under another tab's name, and no caller could
+  detect that.
+
+Titles are resolved against the file's real tab list rather than trusted, so a
+typo raises with the tab list instead of an opaque API 400 on a range.
+
 ## Zendesk connector — read by default, narrow writes
 
 `ZendeskConnector` defaults to OAuth scope `read`. CCEF's Zendesk is a *shared*
