@@ -472,6 +472,63 @@ class TestGetTabsValues:
             connected_connector.get_tabs_values(SAMPLE_SPREADSHEET_ID, ["A", "B"])
 
 
+# -- get_workbook -------------------------------------------------------------
+
+
+class TestGetWorkbook:
+    def test_returns_properties_tab_list_and_values(self, connected_connector):
+        sheet = _batch_spreadsheet(
+            connected_connector,
+            ["Week 2", "Week 3", "Dashboard"],
+            [{"values": [["a"]]}],
+        )
+        sheet.title = "Hawaii 2026 EP Shift Master"
+        sheet.timezone = "Pacific/Honolulu"
+
+        wb = connected_connector.get_workbook(SAMPLE_SPREADSHEET_ID, ["Week 2"])
+
+        assert wb.spreadsheet_id == SAMPLE_SPREADSHEET_ID
+        assert wb.title == "Hawaii 2026 EP Shift Master"
+        assert wb.timezone == "Pacific/Honolulu"
+        # tab_names is EVERY tab, not just the ones read -- that is what lets a
+        # caller notice a tab added or renamed without reading it.
+        assert wb.tab_names == ["Week 2", "Week 3", "Dashboard"]
+        assert list(wb.values) == ["Week 2"]
+
+    def test_costs_one_metadata_and_one_batch_call(self, connected_connector):
+        sheet = _batch_spreadsheet(
+            connected_connector,
+            ["A", "B"],
+            [{"values": [["1"]]}, {"values": [["2"]]}],
+        )
+
+        connected_connector.get_workbook(SAMPLE_SPREADSHEET_ID, ["A", "B"])
+
+        # The budget this method exists for: 2 requests per file, not 2 + 3N.
+        connected_connector._client.open_by_key.assert_called_once()
+        sheet.worksheets.assert_called_once()
+        sheet.values_batch_get.assert_called_once()
+        sheet.worksheet.assert_not_called()
+
+    def test_no_tabs_wanted_still_reports_metadata(self, connected_connector):
+        sheet = _batch_spreadsheet(connected_connector, ["Real"], [])
+
+        wb = connected_connector.get_workbook(
+            SAMPLE_SPREADSHEET_ID, ["Nope"], missing_ok=True
+        )
+
+        assert wb.tab_names == ["Real"]
+        assert wb.values == {}
+        sheet.values_batch_get.assert_not_called()
+
+    def test_get_tabs_values_delegates(self, connected_connector):
+        _batch_spreadsheet(connected_connector, ["A"], [{"values": [["1"]]}])
+
+        assert connected_connector.get_tabs_values(
+            SAMPLE_SPREADSHEET_ID, ["A"]
+        ) == {"A": [["1"]]}
+
+
 # -- get_range_as_dicts -------------------------------------------------------
 
 

@@ -108,9 +108,17 @@ ceiling on 2026-10-27 at 21 tabs across 9 files (72 requests), and the symptom
 was not an error anyone would read: a 429 is recorded per-source as "refused",
 which looks exactly like an empty tab.
 
-`get_tabs_values(spreadsheet_id, [tabs])` is the answer: **one** metadata request
-plus **one** `values:batchGet`, so the cost is 2 per FILE however many tabs are
-read. Use it for any multi-tab read; `get_all_values` is still right for one tab.
+**`get_workbook(spreadsheet_id, [tabs])` is the answer**: one metadata request
+plus one `values:batchGet`, so the cost is 2 per FILE however many tabs are read.
+It returns a `SheetsWorkbook` — title, timezone, **every** tab name (not just the
+ones read, so a caller can notice a tab added or renamed without reading it) and
+the values. `get_tabs_values()` is the values-only form and delegates to it; use
+`get_workbook` whenever you also want the metadata, or you pay for it twice.
+`get_all_values` is still right for a single tab.
+
+A workbook's `timezone` is the file's own setting and is **not** always the zone
+its timestamps are written in — an integration can write local wall-clock times
+into a file nobody ever moved off GMT. Let a per-source override win over it.
 
 Three things it handles that a hand-rolled batchGet usually doesn't:
 

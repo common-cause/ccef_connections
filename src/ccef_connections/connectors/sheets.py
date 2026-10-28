@@ -6,7 +6,7 @@ management and data retrieval using service account authentication.
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -17,6 +17,21 @@ from ..core.retry import retry_google_operation
 from ..exceptions import ConnectionError, CredentialError
 
 logger = logging.getLogger(__name__)
+
+
+class SheetsWorkbook(NamedTuple):
+    """One spreadsheet read in two requests: its properties, its full tab list,
+    and the values of the tabs that were asked for.
+
+    `tab_names` is every tab in the file, not just the ones read -- it is what
+    lets a caller detect a tab that was added or renamed without reading it.
+    """
+
+    spreadsheet_id: str
+    title: str
+    timezone: Optional[str]
+    tab_names: List[str]
+    values: Dict[str, List[List[Any]]]
 
 
 class SheetsConnector(BaseConnection):
@@ -187,6 +202,108 @@ class SheetsConnector(BaseConnection):
         return worksheet.get_all_values()
 
     @retry_google_operation
+    def get_workbook(
+        self,
+        spreadsheet_id: str,
+        worksheet_names: Optional[Sequence[str]] = None,
+        missing_ok: bool = False,
+    ) -> SheetsWorkbook:
+        """
+        Read one spreadsheet -- properties, tab list and tab values -- in TWO
+        Sheets requests, however many tabs are wanted.
+
+        This is the method to reach for when a job reads several tabs of a file
+        and also records what it saw (title, time zone, the full tab list).
+        Assembling the same picture from get_spreadsheet() + worksheets() +
+        get_all_values() per tab costs 2 + 3N requests against a 60/minute
+        ceiling; this costs 2. See get_tabs_values() for the values-only form
+        and the read-budget rationale.
+
+        `timezone` is the file's own setting, which is NOT always the zone its
+        timestamps are written in -- an integration can write local wall-clock
+        times into a file still set to GMT. Callers that parse dates should let
+        a per-source override win over this.
+
+        Args:
+            spreadsheet_id: The Google Sheets spreadsheet ID
+            worksheet_names: Worksheet titles to read; None reads every tab
+            missing_ok: If True, a requested tab that does not exist is omitted
+                from `values` instead of raising. It is still absent from
+                `tab_names` only if it genuinely isn't in the file.
+
+        Returns:
+            SheetsWorkbook(spreadsheet_id, title, timezone, tab_names, values)
+
+        Raises:
+            ValueError: If a requested worksheet does not exist (unless missing_ok)
+            ConnectionError: If not connected, or if Sheets returns a response
+                that cannot be mapped back to the requested tabs
+
+        Examples:
+            >>> connector = SheetsConnector()
+            >>> wb = connector.get_workbook('1ABC...', ['Week 2', 'Week 3'])
+            >>> wb.title, len(wb.tab_names), len(wb.values['Week 2'])
+        """
+        spreadsheet = self.get_spreadsheet(spreadsheet_id)
+
+        # The one metadata request. Titles come from here rather than being
+        # trusted, so a typo fails loudly instead of as an opaque API 400 on a
+        # range, and so a caller can ask for "every tab".
+        existing = [ws.title for ws in spreadsheet.worksheets()]
+        wanted = list(existing if worksheet_names is None else worksheet_names)
+
+        missing = [name for name in wanted if name not in existing]
+        if missing and not missing_ok:
+            raise ValueError(
+                f"worksheet(s) {missing} not found in spreadsheet "
+                f"{spreadsheet_id}; tabs are {existing}"
+            )
+        wanted = [name for name in wanted if name in existing]
+
+        # title/timezone are free here: gspread's Spreadsheet.__init__ has
+        # already fetched the file's properties.
+        values = self._batch_get(spreadsheet, wanted) if wanted else {}
+        return SheetsWorkbook(
+            spreadsheet_id=spreadsheet_id,
+            title=spreadsheet.title,
+            timezone=getattr(spreadsheet, "timezone", None),
+            tab_names=existing,
+            values=values,
+        )
+
+    def _batch_get(
+        self, spreadsheet: Any, worksheet_names: Sequence[str]
+    ) -> Dict[str, List[List[Any]]]:
+        """One values:batchGet for `worksheet_names`, padded like
+        get_all_values(). Titles must already be known to exist."""
+        # absolute_range_name quotes the title and doubles any internal single
+        # quote. A bare title breaks A1 notation on anything with a space in it,
+        # which is most real tabs ('Week 2', 'Los Angeles', 'Form Responses 1').
+        ranges = [absolute_range_name(name) for name in worksheet_names]
+        logger.debug(
+            f"Batch-getting {len(ranges)} worksheet(s) from {spreadsheet.id}"
+        )
+        response = spreadsheet.values_batch_get(ranges)
+        value_ranges = response.get("valueRanges", [])
+
+        # The API answers in request order, so zip is the mapping. Guard the
+        # length anyway: a short response would otherwise shift every tab's
+        # values onto the wrong name, which no caller could detect.
+        if len(value_ranges) != len(worksheet_names):
+            raise ConnectionError(
+                f"Sheets returned {len(value_ranges)} range(s) for "
+                f"{len(worksheet_names)} requested worksheet(s) in "
+                f"{spreadsheet.id}"
+            )
+
+        result: Dict[str, List[List[Any]]] = {}
+        for name, value_range in zip(worksheet_names, value_ranges):
+            values = value_range.get("values", [])
+            # fill_gaps([]) returns [[]], not [] -- an empty tab would arrive as
+            # one blank row and a caller counting rows would see 1.
+            result[name] = fill_gaps(values) if values else []
+        return result
+
     def get_tabs_values(
         self,
         spreadsheet_id: str,
@@ -195,6 +312,10 @@ class SheetsConnector(BaseConnection):
     ) -> Dict[str, List[List[Any]]]:
         """
         Get all values from SEVERAL worksheets of one spreadsheet in two requests.
+
+        The values-only form of get_workbook(); use that one if you also want
+        the file's title, time zone or full tab list, so you don't pay for the
+        metadata twice.
 
         Reading N tabs with get_all_values() costs 3N Sheets requests, because
         gspread caches no metadata: both get_worksheet() and the Worksheet
@@ -232,50 +353,9 @@ class SheetsConnector(BaseConnection):
             >>> for name, rows in tabs.items():
             ...     print(name, len(rows))
         """
-        spreadsheet = self.get_spreadsheet(spreadsheet_id)
-
-        # The one metadata request. Titles come from here rather than being
-        # trusted, so a typo fails loudly instead of as an opaque API 400 on a
-        # range, and so a caller can ask for "every tab".
-        existing = [ws.title for ws in spreadsheet.worksheets()]
-        wanted = list(existing if worksheet_names is None else worksheet_names)
-
-        missing = [name for name in wanted if name not in existing]
-        if missing and not missing_ok:
-            raise ValueError(
-                f"worksheet(s) {missing} not found in spreadsheet "
-                f"{spreadsheet_id}; tabs are {existing}"
-            )
-        wanted = [name for name in wanted if name in existing]
-        if not wanted:
-            return {}
-
-        # absolute_range_name quotes the title and doubles any internal single
-        # quote. A bare title breaks A1 notation on anything with a space in it,
-        # which is most real tabs ('Week 2', 'Los Angeles', 'Form Responses 1').
-        ranges = [absolute_range_name(name) for name in wanted]
-        logger.debug(
-            f"Batch-getting {len(ranges)} worksheet(s) from {spreadsheet_id}"
-        )
-        response = spreadsheet.values_batch_get(ranges)
-        value_ranges = response.get("valueRanges", [])
-
-        # The API answers in request order, so zip is the mapping. Guard the
-        # length anyway: a short response would otherwise shift every tab's
-        # values onto the wrong name, which no caller could detect.
-        if len(value_ranges) != len(wanted):
-            raise ConnectionError(
-                f"Sheets returned {len(value_ranges)} range(s) for "
-                f"{len(wanted)} requested worksheet(s) in {spreadsheet_id}"
-            )
-
-        result: Dict[str, List[List[Any]]] = {}
-        for name, value_range in zip(wanted, value_ranges):
-            values = value_range.get("values", [])
-            # fill_gaps([]) returns [[]], not [] -- an empty tab would arrive as
-            # one blank row and a caller counting rows would see 1.
-            result[name] = fill_gaps(values) if values else []
-        return result
+        return self.get_workbook(
+            spreadsheet_id, worksheet_names, missing_ok=missing_ok
+        ).values
 
     @retry_google_operation
     def get_range_as_dicts(
