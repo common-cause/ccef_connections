@@ -1390,7 +1390,9 @@ def describe_schedule(
         Strings like ``"daily 06:45 America/New_York"``, ``"Su 02:00"``,
         ``"MoWeFr 04:30, 16:30"``, ``"monthly day 1 03:00"``, ``"4x/hour"``, or
         ``"not scheduled"``. Weekdays render as two letters so a multi-day
-        schedule stays compact.
+        schedule stays compact. Hours and minutes are a set product, so a
+        schedule on every hour at minutes [0, 30] renders as ``"daily every
+        hour at :00, :30"`` and means 48 runs a day.
 
     Examples:
         >>> describe_schedule({"scheduled": True, "scheduledDays": [0, 1, 2, 3,
@@ -1408,10 +1410,25 @@ def describe_schedule(
     if runs_per_hour:
         return f"{runs_per_hour}x/hour{suffix}"
 
-    hours = schedule.get("scheduledHours") or []
-    minutes = schedule.get("scheduledMinutes") or [0]
-    minute = minutes[0] if minutes else 0
-    times = ", ".join(f"{h:02d}:{minute:02d}" for h in sorted(hours)) or "??:??"
+    # A Civis schedule is the SET PRODUCT of hours and minutes, which this
+    # docstring says and this function did not do: it rendered minutes[0]
+    # against every hour and dropped the rest. So EP Form Exports, scheduled
+    # correctly on minutes [0, 30], described itself as plain hourly -- 48
+    # runs a day reported as 24. That is worse than an unhelpful string: the
+    # job matched its spec, the rendering said it had drifted off it, and the
+    # fix nearly applied was to "restore" it to the hourly it already looked
+    # like (2026-10-28). A renderer that silently drops a field is evidence
+    # pointing the wrong way.
+    hours = sorted(schedule.get("scheduledHours") or [])
+    minutes = sorted(schedule.get("scheduledMinutes") or [0])
+    if len(hours) == 24:
+        # Every hour: spelling out 24 (or 48) clock times buries the only
+        # thing that distinguishes these schedules, which is the minutes.
+        times = "every hour at " + ", ".join(f":{m:02d}" for m in minutes)
+    else:
+        times = ", ".join(
+            f"{h:02d}:{m:02d}" for h in hours for m in minutes
+        ) or "??:??"
 
     days_of_month = schedule.get("scheduledDaysOfMonth") or []
     if days_of_month:

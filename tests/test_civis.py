@@ -870,6 +870,35 @@ class TestDescribeSchedule:
         s = {"scheduled": True, "scheduledDays": [0, 1, 2, 3, 4, 5, 6]}
         assert describe_schedule(s) == "daily ??:??"
 
+    def test_every_minute_is_rendered_not_just_the_first(self):
+        """A schedule is the SET PRODUCT of hours and minutes.
+
+        This rendered minutes[0] against every hour and dropped the rest, so
+        EP Form Exports -- correctly scheduled every 30 minutes on minutes
+        [0, 30] -- described itself as plain hourly, 48 runs a day reported as
+        24. The damage is not a bad string: the job matched its spec, the
+        rendering said it had drifted off it, and the fix nearly applied was
+        to "restore" it to the hourly it already looked like (2026-10-28).
+        """
+        s = {"scheduled": True, "scheduledDays": [0, 1, 2, 3, 4, 5, 6],
+             "scheduledHours": list(range(24)), "scheduledMinutes": [0, 30]}
+        out = describe_schedule(s)
+        assert out == "daily every hour at :00, :30"
+        # The half-hour must be visible however it is phrased.
+        assert ":30" in out
+
+    def test_several_minutes_on_named_hours_are_a_product(self):
+        s = {"scheduled": True, "scheduledDays": [0, 1, 2, 3, 4, 5, 6],
+             "scheduledHours": [6, 18], "scheduledMinutes": [0, 30]}
+        assert describe_schedule(s) == "daily 06:00, 06:30, 18:00, 18:30"
+
+    def test_all_24_hours_one_minute_stays_short(self):
+        """Spelling out 24 clock times buries the minute, which is the only
+        thing distinguishing these schedules from each other."""
+        s = {"scheduled": True, "scheduledDays": [0, 1, 2, 3, 4, 5, 6],
+             "scheduledHours": list(range(24)), "scheduledMinutes": [15]}
+        assert describe_schedule(s) == "daily every hour at :15"
+
     def test_absent_days_key_renders_time_only(self):
         assert describe_schedule(
             {"scheduled": True, "scheduledHours": [5], "scheduledMinutes": [0]}
