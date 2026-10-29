@@ -33,6 +33,19 @@ logger = logging.getLogger(__name__)
 PTV_API_BASE = "https://app.protectthevote.net/api"
 PTV_DEFAULT_USERNAME = "colab"
 
+# Read timeout, seconds. Was a hardcoded 60 until 0.34.0, which is under what a
+# large state's shift_volunteers export now takes: OR crossed 60s in Oct 2026
+# and every caller started failing with a bare ReadTimeout.
+#
+# 150 is deliberately ABOVE Cloudflare's origin timeout (~100s in front of PTV),
+# not below it. A slow-but-healthy export finishes inside Cloudflare's window and
+# now succeeds; one that does NOT finish comes back as a clean HTTP **524**,
+# which says the ORIGIN gave up. Setting this lower converts that 524 into a
+# client-side ReadTimeout and throws away the only signal distinguishing "our
+# patience was too short" from "PTV cannot serve this state at all" -- a
+# distinction that matters, because raising a client timeout can never fix a 524.
+PTV_DEFAULT_TIMEOUT = 150
+
 _ENDPOINT_SHIFT_VOLUNTEERS = f"{PTV_API_BASE}/shift_volunteers_csv"
 _ENDPOINT_USERS = f"{PTV_API_BASE}/users_csv"
 _ENDPOINT_STATE_SHIFTS = f"{PTV_API_BASE}/state_shifts_csv"
@@ -65,15 +78,20 @@ class PTVConnector(BaseConnection):
         >>> shifts = connector.get_all_state_shifts(["PA", "GA"])
     """
 
-    def __init__(self, username: str = PTV_DEFAULT_USERNAME) -> None:
+    def __init__(self, username: str = PTV_DEFAULT_USERNAME,
+                 timeout: int = PTV_DEFAULT_TIMEOUT) -> None:
         """
         Initialize the PTV connector.
 
         Args:
             username: HTTP Basic Auth username. Defaults to 'colab', which
                 is the standard username for PTV API access.
+            timeout: Per-request read timeout in seconds. See
+                PTV_DEFAULT_TIMEOUT -- raise it for a state whose export is
+                slow but healthy; it cannot rescue one that returns 524.
         """
         super().__init__()
+        self._timeout: int = timeout
         self._api_key: Optional[str] = None
         self._username: str = username
 
@@ -118,7 +136,8 @@ class PTVConnector(BaseConnection):
 
     # -- HTTP helpers ----------------------------------------------------------
 
-    def _fetch_csv(self, endpoint: str, state_code: str) -> str:
+    def _fetch_csv(self, endpoint: str, state_code: str,
+                   timeout: Optional[int] = None) -> str:
         """
         Fetch raw CSV text from a PTV endpoint for a given state.
 
@@ -148,7 +167,7 @@ class PTVConnector(BaseConnection):
                 endpoint,
                 params=params,
                 auth=(self._username, self._api_key),
-                timeout=60,
+                timeout=timeout if timeout is not None else self._timeout,
             )
         except requests.RequestException as e:
             raise ConnectionError(f"PTV API request failed: {e}") from e
