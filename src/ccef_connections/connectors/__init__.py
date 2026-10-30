@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from .graph_mail import GraphMailConnector
     from .helpscout import HelpScoutConnector
     from .hex import HexConnector
+    from .jotform_tables import JotformTablesConnector
     from .openai import OpenAIConnector
     from .ptv import PTVConnector
     from .render import RenderConnector
@@ -61,6 +62,7 @@ _LAZY_IMPORTS = {
     "GraphMailConnector": ("graph_mail", None),
     "HelpScoutConnector": ("helpscout", None),
     "HexConnector": ("hex", None),
+    "JotformTablesConnector": ("jotform_tables", None),
     "OpenAIConnector": ("openai", "openai"),
     "PTVConnector": ("ptv", None),
     "RenderConnector": ("render", None),

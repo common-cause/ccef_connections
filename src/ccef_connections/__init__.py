@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from .connectors.graph_mail import GraphMailConnector
     from .connectors.helpscout import HelpScoutConnector
     from .connectors.hex import HexConnector
+    from .connectors.jotform_tables import JotformTablesConnector
     from .connectors.openai import OpenAIConnector
     from .connectors.ptv import PTVConnector
     from .connectors.render import RenderConnector
@@ -61,7 +62,7 @@ if TYPE_CHECKING:
     from .connectors.zendesk import ZendeskConnector
     from .connectors.zoom import ZoomConnector
 
-__version__ = "0.34.0"
+__version__ = "0.35.0"
 
 # Lazy attribute -> (module, required extra or None).
 # Connectors with extra=None need only the base install (requests).
@@ -85,6 +86,7 @@ _LAZY_IMPORTS = {
     "GraphMailConnector": ("ccef_connections.connectors.graph_mail", None),
     "HelpScoutConnector": ("ccef_connections.connectors.helpscout", None),
     "HexConnector": ("ccef_connections.connectors.hex", None),
+    "JotformTablesConnector": ("ccef_connections.connectors.jotform_tables", None),
     "OpenAIConnector": ("ccef_connections.connectors.openai", "openai"),
     "PTVConnector": ("ccef_connections.connectors.ptv", None),
     "RenderConnector": ("ccef_connections.connectors.render", None),
@@ -124,6 +126,7 @@ __all__ = [
     "GraphMailConnector",
     "HelpScoutConnector",
     "HexConnector",
+    "JotformTablesConnector",
     "OpenAIConnector",
     "PTVConnector",
     "RenderConnector",

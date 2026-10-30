@@ -1632,6 +1632,32 @@ for s in sug.list_signups("active"):
         rows = sug.get_report(s["signupid"], "filled")
 ```
 
+### JotformTablesConnector
+
+Read-only access to a Jotform **Table its owner has shared by link** (`https://www.jotform.com/tables/<id>`), signed out. Built for a partner's form, where the only access we have is the link. For a form CC owns, use Jotform's documented API with the owner's key instead.
+
+**Credential:** none.
+
+**These are the Tables web app's own endpoints, not Jotform's documented API**, so they can change without notice. What the connector depends on (verified 2026-10-30):
+
+- Loading the table page sets a guest session.
+- Data calls only work when scoped through the table, as `/API/sheets/<tableID>/...`. The unscoped path answers 401.
+- A jotform.com `Referer` is required. Without it you get `200 "Cross-Site Requests not allowed!"`.
+
+An unshared or revoked link raises `AuthenticationError`, and only 429 is retried.
+
+**`created_at` has no timezone.** It is in the form owner's account zone, so the caller has to know it.
+
+- `get_questions(table_id)` - The form's questions keyed by question id (`type`, `name`, `text`).
+- `get_rows(table_id, created_after=None)` - Every live submission, newest first, paged 1,000 at a time. `created_after` (`"YYYY-MM-DD HH:MM:SS"`, owner's zone) is filtered server-side. Answers are keyed by question id. A checkbox answer is a list, or `{"0": .., "other": text}` once someone writes in "Other".
+
+```python
+from ccef_connections import JotformTablesConnector
+
+jt = JotformTablesConnector()
+rows = jt.get_rows("242045989689073", created_after="2026-09-15 00:00:00")
+```
+
 ### GitHubConnector
 
 Provides file-write access to a GitHub repository via the REST contents API. Designed
