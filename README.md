@@ -27,6 +27,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 - **Email (Resend)**: Transactional email — magic-links, notifications — via Resend's HTTP API
 - **Stripe**: Read access for reconciliation — charges, refunds, disputes, payouts and balance transactions, across **multiple Stripe accounts** from one connector
 - **PayPal**: Read access to Transaction Search for reconciliation — payments, withdrawals, the DAF sponsor behind each payment, and the withdrawal that paid each one out
+- **Shopify**: Read access to a store's orders (GraphQL Admin API) — line items, totals, refunds, billing address and the Shopify Payments reference — with the Dev Dashboard's 24-hour client credentials token
 - **CallHub**: P2P texting / call center platform — contact lists ("phonebooks"), paced CSV bulk import into a phonebook with an import-completion wait, the contact-field mapping catalogue, custom fields, DNC entries, tags, and read-only campaign/agent/team listings. No campaign start/stop by design
 - **Tatango**: SMS broadcast platform (Messaging API v2) — subscribers with opt-in bypass flags, per-list custom fields, and webhook registrations
 - **Unified Credentials**: `{CREDENTIAL_NAME}_PASSWORD` pattern for Civis compatibility
@@ -38,7 +39,7 @@ A reusable Python library for Common Cause Education Fund data integrations. Pro
 Dependencies are split by connector. The base install is lightweight
 (`requests`, `tenacity`, `python-dotenv`) and covers core plus all REST
 connectors: Action Builder, Action Network, Asana, CallHub, Civis, Email (Resend),
-Geocodio, GitHub, HelpScout, Hex, PayPal, PTV, ROI CRM, SignUpGenius, Tatango, and Zoom. Heavier connectors are opt-in via extras:
+Geocodio, GitHub, HelpScout, Hex, PayPal, PTV, ROI CRM, Shopify, SignUpGenius, Tatango, and Zoom. Heavier connectors are opt-in via extras:
 
 | Extra | Enables | Pulls in |
 |---|---|---|
@@ -722,6 +723,27 @@ for t in pp.payments(txns):                     # T0001 grants; EVENT_MONEY_IN f
   `transaction_subject`. Donor and designation come from the sponsor's grant report.
 - **Dates are UTC.** Convert `as_datetime` for Eastern reporting.
 - **The payout date is derived** — the first withdrawal after the payment, by timestamp.
+
+### Shopify Example
+
+```python
+from ccef_connections import ShopifyConnector
+from ccef_connections.connectors import shopify as sh
+
+shop = ShopifyConnector()     # SHOPIFY_API_KEY_PASSWORD={"shop","client_id","client_secret"}
+shop.connect()                # client credentials grant: a 24-hour token, refreshed as needed
+for o in shop.orders(updated_since="2026-11-01"):      # oldest first, paged
+    print(o["name"], o["createdAt"], sh.money(o["totalPriceSet"]), sh.payment_references(o))
+```
+
+- **Same organization only.** The client credentials grant works only when the app and
+  the store belong to the same Shopify organization (`shop_not_permitted` otherwise).
+- **60 days without `read_all_orders`.** `reads_all_orders` says which you have; without
+  it, keep your own copy and read daily.
+- **Customer fields need protected customer data access** on the app, or they come back
+  null with no error.
+- **Timestamps are UTC.** `transactions[].paymentId` is the Orders export's "Payment
+  Reference"; `legacyResourceId` is its "Id".
 
 ### Geocodio Example
 
