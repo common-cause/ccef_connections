@@ -945,6 +945,29 @@ def retry_paypal_operation(func: Callable) -> Callable:
     )(func)
 
 
+def retry_shopify_operation(func: Callable) -> Callable:
+    """
+    Decorator for Shopify Admin API operations with retry logic.
+
+    Only RateLimitError is retried, per the module rule. Shopify's GraphQL Admin API
+    meters query COST (a leaky bucket per app and store) and answers an empty bucket
+    with a THROTTLED error inside a 200, which the connector raises as RateLimitError.
+
+    Args:
+        func: The function to decorate
+
+    Returns:
+        Decorated function with Shopify-specific retry logic
+    """
+    return retry(
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type(RateLimitError),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )(func)
+
+
 def retry_geocodio_operation(func: Callable) -> Callable:
     """
     Decorator for Geocodio API operations with retry logic.

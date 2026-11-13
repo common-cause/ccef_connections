@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from .snowflake import SnowflakeConnector
     from .chariot import ChariotConnector
     from .paypal import PayPalConnector
+    from .shopify import ShopifyConnector
     from .stripe import StripeConnector
     from .tatango import TatangoConnector
     from .user_profile import UserProfileConnector
@@ -74,6 +75,7 @@ _LAZY_IMPORTS = {
     "SnowflakeConnector": ("snowflake", "snowflake"),
     "ChariotConnector": ("chariot", None),
     "PayPalConnector": ("paypal", None),
+    "ShopifyConnector": ("shopify", None),
     "StripeConnector": ("stripe", None),
     "TatangoConnector": ("tatango", None),
     "UserProfileConnector": ("user_profile", None),

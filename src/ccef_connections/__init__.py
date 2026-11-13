@@ -56,13 +56,14 @@ if TYPE_CHECKING:
     from .connectors.snowflake import SnowflakeConnector
     from .connectors.chariot import ChariotConnector
     from .connectors.paypal import PayPalConnector
+    from .connectors.shopify import ShopifyConnector
     from .connectors.stripe import StripeConnector
     from .connectors.tatango import TatangoConnector
     from .connectors.user_profile import UserProfileConnector
     from .connectors.zendesk import ZendeskConnector
     from .connectors.zoom import ZoomConnector
 
-__version__ = "0.35.0"
+__version__ = "0.36.0"
 
 # Lazy attribute -> (module, required extra or None).
 # Connectors with extra=None need only the base install (requests).
@@ -98,6 +99,7 @@ _LAZY_IMPORTS = {
     "SnowflakeConnector": ("ccef_connections.connectors.snowflake", "snowflake"),
     "ChariotConnector": ("ccef_connections.connectors.chariot", None),
     "PayPalConnector": ("ccef_connections.connectors.paypal", None),
+    "ShopifyConnector": ("ccef_connections.connectors.shopify", None),
     "StripeConnector": ("ccef_connections.connectors.stripe", None),
     "TatangoConnector": ("ccef_connections.connectors.tatango", None),
     "UserProfileConnector": ("ccef_connections.connectors.user_profile", None),
@@ -138,6 +140,7 @@ __all__ = [
     "SnowflakeConnector",
     "ChariotConnector",
     "PayPalConnector",
+    "ShopifyConnector",
     "StripeConnector",
     "TatangoConnector",
     "UserProfileConnector",

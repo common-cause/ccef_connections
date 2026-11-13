@@ -621,6 +621,62 @@ class CredentialManager:
             )
         return {"client_id": cid, "secret": sec}
 
+    def get_shopify_credentials(self, credential_name: str = "SHOPIFY_API_KEY") -> Dict[str, str]:
+        """
+        Get a Shopify Dev Dashboard app's store, client id and secret.
+
+        JSON: ``{"shop": "...", "client_id": "...", "client_secret": "..."}``.
+
+        ``shop`` is the store's myshopify.com name; a full ``https://x.myshopify.com/``
+        is trimmed to ``x``. ⚠ **Several key spellings are accepted**, as for PayPal: the
+        first seed used ``client id`` / ``client secret`` with spaces.
+
+        Args:
+            credential_name: Name of the credential (default: "SHOPIFY_API_KEY").
+                The env var read is {credential_name}_PASSWORD.
+
+        Returns:
+            ``{"shop": ..., "client_id": ..., "client_secret": ...}``
+
+        Raises:
+            CredentialError: If the credential is missing, not JSON, or incomplete
+        """
+        raw = self.get_credential(credential_name)
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except ValueError:
+                raise CredentialError(
+                    f"{credential_name}_PASSWORD is not JSON; expected "
+                    '{"shop": ..., "client_id": ..., "client_secret": ...}'
+                )
+        if not isinstance(raw, dict):
+            raise CredentialError(f"{credential_name}_PASSWORD must be a JSON object")
+        norm = {str(k).strip().lower().replace(" ", "_"): v for k, v in raw.items()}
+
+        def pick(*names: str) -> Optional[str]:
+            for n in names:
+                if norm.get(n):
+                    return str(norm[n]).strip()
+            return None
+
+        shop = pick("shop", "store", "shop_name", "store_name", "domain")
+        cid = pick("client_id", "clientid", "api_key")
+        sec = pick("client_secret", "clientsecret", "secret", "api_secret")
+        if not shop or not cid or not sec:
+            raise CredentialError(
+                f"{credential_name}_PASSWORD needs shop, client_id and client_secret; "
+                f"keys present: {sorted(raw)}"
+            )
+        if cid == sec:
+            raise CredentialError(
+                f"{credential_name}_PASSWORD has the same value in both fields -- one "
+                f"value was seeded twice. Reseed from the app's Client ID and secret."
+            )
+        shop = shop.lower().removeprefix("https://").removeprefix("http://")
+        shop = shop.split("/")[0].removesuffix(".myshopify.com")
+        return {"shop": shop, "client_id": cid, "client_secret": sec}
+
     def get_render_api_key(self, credential_name: str = "RENDER_API_KEY") -> str:
         """
         Get a Render API key.
